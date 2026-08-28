@@ -16,7 +16,7 @@
  * pump last wrote.
  */
 import { mirror, resolveMode } from "./mirror.ts";
-import { readSettings, type EffectiveSettings } from "./settings.ts";
+import { readSettings as readSettingsFromDisk, type EffectiveSettings } from "./settings.ts";
 import type { AppServerConn } from "./codex.ts";
 import type { RunHandle, RunRecord } from "./model.ts";
 import type { ThreadStartParams } from "../generated/codex-protocol/ts/v2/ThreadStartParams.ts";
@@ -45,7 +45,7 @@ export class ThreadRuns {
     private readonly onConnect: (conn: AppServerConn) => void = () => {},
     private readonly now: () => number = Date.now,
     /** Injectable so the mirror is tested against fixture settings, not the real disk. */
-    private readonly readSettings: () => EffectiveSettings = () => readSettings(),
+    private readonly readSettings: () => EffectiveSettings = readSettingsFromDisk,
   ) {}
 
   /** Connect once, memoized — concurrent first calls share one in-flight connect. */

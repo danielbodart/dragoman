@@ -64,6 +64,28 @@ describe("codex_run / codex_status", () => {
     expect(runs.status(handle)?.status).not.toBe("done");
   });
 
+  test("the DEFAULT settings reader is the disk one, not a self-reference", async () => {
+    // Regression: the constructor's default readSettings once referred to the
+    // parameter itself (`() => readSettings()`), shadowing the import and
+    // recursing forever — start() hung the moment real settings were read.
+    // Construct with the real default reader (only connect + onConnect given),
+    // point it at an empty config dir so it reads nothing, and assert start()
+    // returns rather than hangs. bun:test's per-test timeout fails a hang.
+    const conn = new FakeAppServer();
+    conn.results["thread/start"] = [{ thread: { id: "t9" } }];
+    conn.results["turn/start"] = [{ turn: { id: "turn9" } }];
+    const previous = { dir: process.env.CLAUDE_CONFIG_DIR, proj: process.env.CLAUDE_PROJECT_DIR };
+    process.env.CLAUDE_CONFIG_DIR = "/nonexistent-dragoman-test-config";
+    process.env.CLAUDE_PROJECT_DIR = "/nonexistent-dragoman-test-project";
+    try {
+      const runs = new ThreadRuns(async () => conn, (c) => startPump(c, runs, new FakeElicitationChannel()));
+      expect(await runs.start("do the thing", "/repo")).toBe("t9");
+    } finally {
+      process.env.CLAUDE_CONFIG_DIR = previous.dir;
+      process.env.CLAUDE_PROJECT_DIR = previous.proj;
+    }
+  });
+
   test("thread/start mirrors the resolved posture (empty settings → safe default)", async () => {
     const { conn, runs } = bridge();
     await runs.start("do the thing", "/repo");
