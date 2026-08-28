@@ -198,17 +198,21 @@ interface AppServerConn {
   with long-lived calls — the notification stream, a long turn — opting out.
 - **Caveat (below the seam, so it does not touch testability):** `tidewaiter` gets framing
   for free because Docker speaks HTTP and Bun's `fetch` handles it. Codex's app-server
-  speaks framed JSON-RPC over a raw socket, so Dragoman's lowest layer owns the framing
-  itself — `Bun.connect({ unix })` plus a line/`Content-Length` splitter — rather than a
-  one-line `fetch` wrapper. This is a little more real-transport code, but the interface
-  above it is unchanged, and the fake never sees it.
+  speaks framed JSON-RPC, so Dragoman's lowest layer owns the framing itself — an NDJSON
+  line splitter over the transport — rather than a one-line `fetch` wrapper. **The
+  transport turned out to be a subprocess, not a socket:** the control socket and
+  `codex app-server proxy` both speak a segmented remote-control envelope and silently
+  drop plain NDJSON; only the bare **`codex app-server` stdio server** speaks plain
+  NDJSON (verified 2026-08-28). So Dragoman spawns `codex app-server` (`Bun.spawn`,
+  stdin/stdout) and frames its stdout. This is a little more real-transport code, but the
+  interface above it is unchanged, and the fake never sees it.
 
 ## 8. Open sub-threads (spike-sized, not blockers)
 
-- Exactly which Claude Code settings a plugin/runtime can read at runtime (keystone
-  of the mirroring design).
+- ~~Exactly which Claude Code settings a plugin/runtime can read at runtime~~ —
+  **resolved 2026-08-28** (live-probed via a `dragoman_diagnostics` MCP tool); see §10.
 - Precise alignment between Claude's permission categories and
-  `AskForApproval.granular`.
+  `AskForApproval.granular` — **detailed in §10's mapping table.**
 - The simplified companion **icon** (favicon/app-icon derived from the logo — likely
   the two crossed scrolls or the compass mark).
 - Licence choice.
@@ -220,14 +224,135 @@ interface AppServerConn {
    **async** Claude elicitation. Success = a real Codex task under a normal sandbox
    prompts the user instead of hanging.
 2. **Settings mirroring.** Read Claude's settings; map to `sandboxPolicy` +
-   `approvalPolicy` (+ granular) on each `turn/start`.
+   `approvalPolicy` (+ granular) on each `turn/start`. **Full design in §10** (mapping
+   table, three-tier posture, union-merge); v1 lands the core (modes + sandbox + dirs).
 3. **Heartbeat filter.** Collapse notifications to coarse status; surface via
    subagent narration.
 4. **Packaging.** Single-binary build, plugin/skill wrapper, tests, release.
 5. **(v2, maybe)** Shared bridge daemon for cross-session connection pooling.
 
+## 10. Settings mirroring **(design; discovery verified)**
+
+The product idea (README: "Mirror Claude, don't reinvent it"). Dragoman reads
+Claude Code's own posture and mirrors it onto Codex per turn, so Codex inherits
+Claude's stance with no config of its own. This is a **big surface area**, tracked
+here in full even though the first implementation lands the core of it.
+
+### 10.1 What we can read — verified live, not assumed
+
+Probed on 2026-08-28 by calling a `dragoman_diagnostics` MCP tool from real Claude
+Code 2.1.250 launches, in **both** project- and user-scoped registrations:
+
+- **`CLAUDE_PROJECT_DIR` is set to the project root in both scopes** — the reliable,
+  stable anchor (unchanged by `/cd` or `/add-dir`). Anchor project mirroring on it,
+  never on `process.cwd()` (which also happened to be the project dir here, but that
+  is version behaviour, not a documented contract).
+- **The config dir** is `CLAUDE_CONFIG_DIR ?? ~/.claude`.
+- **All four settings layers are readable off disk**, low→high precedence:
+  `~/.claude/settings.json` (user) · `~/.claude/settings.local.json` (user-local) ·
+  `$CLAUDE_PROJECT_DIR/.claude/settings.json` (project) ·
+  `$CLAUDE_PROJECT_DIR/.claude/settings.local.json` (project-local).
+- **Merge rule** (from Claude Code docs): permission/sandbox **arrays**
+  (`allow`/`deny`/`ask`, sandbox fs/network lists) are **union-merged** across every
+  layer; **scalars** (`defaultMode`, `sandbox.enabled`) are **last-wins** by
+  precedence (managed > cli > project-local > project > user). It is a **union, not an
+  intersection.** Managed/MDM settings and CLI `--settings`/`--permission-mode`
+  overrides sit above the files and are **not** visible to a file reader.
+
+### 10.2 The live-mode gap, and how Claude closes it
+
+**Verified limit:** the *live* session permission mode (a mid-session Shift+Tab into
+`plan`/`acceptEdits`/`bypassPermissions`, or a `--permission-mode` flag) is **not
+exposed to an MCP server by any means** — no env var, no MCP method. Only the static
+`permissions.defaultMode` is readable. A file reader therefore reconstructs a correct
+*baseline* but cannot see the live mode.
+
+**Resolution — a three-tier posture, best-to-worst source (Claude is the sensor for
+what the server can't read):**
+
+1. **Explicit param on the tool.** `codex_run(prompt, cwd, posture?)` accepts an
+   optional posture/mode. Claude Code itself knows the *intent* of the moment
+   (the user said "just plan this", or "go ahead in this trusted repo") even though it
+   cannot read an exact enum, and fills it in. This turns the unreadable value into an
+   ordinary tool argument.
+2. **Static reconstruction.** Absent an explicit param, merge the four settings layers
+   (§10.1) into an effective `defaultMode` + rules + sandbox and mirror that.
+3. **Safe default.** Absent both, a conservative default (`on-request` + `read-only`),
+   documented, so Dragoman never silently runs Codex hotter than Claude would.
+
+### 10.3 The mapping — Claude → Codex
+
+Codex targets (verified, `codex-cli 0.150.1`): `approvalPolicy: AskForApproval`
+(`untrusted | on-request | never | {granular:{sandbox_approval, rules, skill_approval,
+request_permissions, mcp_elicitations}}`); `sandbox: SandboxMode` on `thread/start`
+(`read-only | workspace-write | danger-full-access`) vs `sandboxPolicy: SandboxPolicy`
+per turn (`dangerFullAccess | readOnly{networkAccess} | workspaceWrite{writableRoots,
+networkAccess, excludeTmpdirEnvVar, excludeSlashTmp} | externalSandbox{networkAccess}`).
+
+**Permission mode → approval + sandbox:**
+
+| Claude mode (`permissions.defaultMode` / live) | Codex `approvalPolicy` | Codex sandbox |
+|---|---|---|
+| `plan` | `untrusted` (ask before acting) | `readOnly` |
+| `default` / `manual` | `on-request` | `workspaceWrite` |
+| `acceptEdits` | `on-request` (still ask for non-edits) | `workspaceWrite` |
+| `auto` | `on-request` + rely on elicitation for escalations | `workspaceWrite` |
+| `dontAsk` | `never` (auto-deny unlisted → maps to no-prompt) | `workspaceWrite` |
+| `bypassPermissions` | `never` | `dangerFullAccess` |
+
+**Sandbox block → `SandboxPolicy`** (Claude 2.1.250 sandbox surface):
+
+| Claude setting | Codex target |
+|---|---|
+| `sandbox.enabled: false` | policy from the mode row above (no extra sandbox) |
+| `sandbox.enabled: true` | force at least `workspaceWrite` (or `readOnly` under `plan`) |
+| `permissions.additionalDirectories` | `workspaceWrite.writableRoots` (⊕ the cwd) |
+| `sandbox.network.allowedDomains` non-empty / `strictAllowlist` | `networkAccess: true` + carry domains via Codex network config / execpolicy |
+| `sandbox.network` empty (default deny) | `networkAccess: false` |
+| `sandbox.filesystem.denyRead`/`denyWrite` | `permissions` profile fs `entries` (`access: "deny"`) |
+| `sandbox.filesystem.allowRead`/`allowWrite` | fs `entries` (`access: "read"`/`"write"`) |
+
+**Rules → execpolicy / granular:**
+
+| Claude | Codex |
+|---|---|
+| `permissions.deny` `Bash(...)` rules | execpolicy `prefix_rule(decision="forbidden")` (or pre-decline in the approval handler) |
+| `permissions.allow` `Bash(...)` rules | execpolicy `prefix_rule(decision="allow")` via `acceptWithExecpolicyAmendment`, so matching commands skip the prompt |
+| `permissions.ask` rules | leave to the normal elicitation path |
+| `WebFetch(domain:...)` allow/deny | Codex network allow/deny host rules |
+| `mcp__server__tool` rules | (n/a to Codex's own exec; informs which Codex tool calls to auto-answer) |
+
+**Granular sub-toggles** (`AskForApproval.granular`): once modes+rules are mapped,
+`sandbox_approval`/`rules`/`request_permissions`/`mcp_elicitations`/`skill_approval`
+are set to match which categories Claude would prompt on, rather than an all-or-nothing
+policy — the finest-grained mirror.
+
+### 10.4 Known non-mirrorable / caveats
+
+- **Live mode** — see §10.2 (closed via the tool param, not readable).
+- **Managed/enterprise + CLI overrides** — invisible to a file reader; Dragoman mirrors
+  what it can see and never claims to reflect a managed ceiling it cannot detect.
+- **`SandboxMode` (enum, `thread/start`) vs `SandboxPolicy` (object, per-turn)** are
+  different Codex types for the same concept — the mapper must **translate**, choosing
+  the enum at thread start and the structured object on `turn/start`/`settings/update`.
+- **Codex named permission profiles** are reference-by-id on the RPC surface; inline
+  definitions go through the freeform `config` map (`[permissions.<id>]`). Prefer the
+  structured `sandboxPolicy` + execpolicy amendments for v1; profiles are a later lever.
+
+### 10.5 Build shape
+
+A **pure function** at the core — `(effectiveClaudeSettings, posture?) → { approvalPolicy,
+sandbox/sandboxPolicy, execpolicyAmendments }` — with the file-reading and merge as a
+thin IO layer above it (same pure/IO split as the rest, unit-tested against fixture
+settings trees). It slots into `ThreadRuns.start` exactly where the fixed
+`{approvalPolicy:"untrusted", sandbox:"workspace-write"}` sits today — a replacement of
+those params, not a rewrite. Roadmap step 2 ships the core (modes + sandbox +
+directories); the rules→execpolicy and network mappings follow, tracked by the table
+above.
+
 ---
 
 _Design verified against `codex-cli 0.150.1` and `claude-code 2.1.250` on
 2026-08-28. Protocol method names and payload shapes are quoted from the generated
-app-server schema and live probe captures, not from memory._
+app-server schema and live probe captures; the runtime-discovery and settings facts
+in §10 are from live `dragoman_diagnostics` probes, not from memory._

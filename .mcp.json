@@ -1,8 +1,0 @@
-{
-  "mcpServers": {
-    "dragoman": {
-      "command": "./dist/dragoman",
-      "args": ["serve"]
-    }
-  }
-}
