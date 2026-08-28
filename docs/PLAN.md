@@ -145,11 +145,63 @@ coarse one-liners (`editing auth.rs`, `running tests`, `plan: step 2/3`).
 
 - **Bun**, compiled to a **single self-contained binary** (`bun build --compile`).
   Users must not need Bun installed.
-- Core written as testable pure functions: an HTTP/RPC handler shaped
-  `(Request) => Promise<Response>` with **dependency injection** at the wire edges
-  (the app-server socket, the Claude/MCP channel, the clock, the filesystem), so the
-  translation logic is unit-testable without real sockets.
+- Core written as testable pure functions: an HTTP/RPC handler with **dependency
+  injection** at the wire edges (the app-server socket, the Claude/MCP channel, the
+  clock, the filesystem), so the translation logic is unit-testable without real
+  sockets.
 - Proper **build, tests, and releases** from the start.
+
+### Testability seam — the fake is an object, not a process
+
+The design borrows a stance proven in a sibling Bun project,
+[`tidewaiter`](https://github.com/danielbodart/tidewaiter) (itself lifting the shape
+from [`portical`](https://github.com/danielbodart/portical)): **define the seam at the
+protocol boundary as a plain interface, so the transport is a value you inject — and
+the test double is an in-memory object implementing that interface, with no socket,
+port, or subprocess.**
+
+In `tidewaiter` this is one type — `type Handler = (Request) => Promise<Response>` —
+and it works so cleanly precisely because Docker's Engine API is request/response
+HTTP that merely happens to ride a Unix socket. Bun's `fetch` speaks Unix sockets
+natively (`fetch(req, { unix: path })`), so a Unix socket, a TCP endpoint, and an
+in-memory fake are all the *same* `Handler` shape: the client above cannot tell which
+it is talking to.
+
+Dragoman **cannot reuse `Handler` verbatim**, because Codex's app-server is not
+request/response HTTP — it is JSON-RPC over a socket with a **bidirectional** stream:
+client→server calls, server→client requests (the `handleServerRequest` approval path,
+§5), and the ~79-type notification feed (§6). A `(Request) => Promise<Response>` shape
+cannot express "the server pushes me a message I did not ask for." So Dragoman keeps
+the *principle* and moves the seam one level up, to a behavioural interface over the
+duplex — the direct analogue of `tidewaiter`'s `DockerClient`:
+
+```ts
+interface AppServerConn {
+  request(method: string, params: unknown): Promise<unknown>;   // client→server RPC
+  notifications: AsyncIterable<Notification>;                    // server→client feed
+  onServerRequest(                                               // the approval path
+    handler: (req: ServerRequest) => Promise<ServerResponse>,
+  ): void;
+}
+```
+
+- A **`FakeAppServer`** implementing this — public mutable state, recorded-call arrays,
+  and an `emit()` that pushes a notification or a server-request into the stream — lets
+  the two riskiest pieces (the **async approval bridge**, §5; the **heartbeat collapse**,
+  §6) be unit-tested with zero real Codex daemon, exactly as `tidewaiter`'s `FakeDocker`
+  exercises a whole update flow with no Docker. The async-iterable-plus-`emit` idiom for
+  the notification feed is lifted straight from its faked Docker `events()` stream.
+- Two disciplines from that lineage carry over below the interface, both born of a
+  **kept-alive socket**: **drain every response body** (an unread reply desyncs the next
+  frame on a persistent connection — the same instinct as §6 consuming-then-dropping the
+  firehose), and treat **timeout as per-call policy** (a decorator over the transport),
+  with long-lived calls — the notification stream, a long turn — opting out.
+- **Caveat (below the seam, so it does not touch testability):** `tidewaiter` gets framing
+  for free because Docker speaks HTTP and Bun's `fetch` handles it. Codex's app-server
+  speaks framed JSON-RPC over a raw socket, so Dragoman's lowest layer owns the framing
+  itself — `Bun.connect({ unix })` plus a line/`Content-Length` splitter — rather than a
+  one-line `fetch` wrapper. This is a little more real-transport code, but the interface
+  above it is unchanged, and the fake never sees it.
 
 ## 8. Open sub-threads (spike-sized, not blockers)
 

@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        # Full history: run.ts's version() derives the minor from the commit
+        # count, which a shallow clone gets wrong (and the script refuses).
+        with:
+          fetch-depth: 0
+      - uses: jdx/mise-action@v4
+      - run: bun install --frozen-lockfile
+      - run: bun run.ts check
+      - run: bun run.ts test
+      - run: bun run.ts build

@@ -1,0 +1,20 @@
+{
+  "name": "dragoman",
+  "version": "0.1.0",
+  "type": "module",
+  "module": "src/main.ts",
+  "private": true,
+  "scripts": {
+    "start": "bun run src/main.ts serve",
+    "check": "bun run.ts check",
+    "test": "bun run.ts test",
+    "build": "bun run.ts build"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5"
+  }
+}
