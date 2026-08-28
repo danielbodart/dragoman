@@ -12,9 +12,12 @@
  * NDJSON — one JSON object per line, `\n`-terminated — in a JSON-RPC-*like*
  * dialect with no `jsonrpc` field.
  */
+import type { Socket } from "bun";
 import type { ClientRequest } from "../generated/codex-protocol/ts/ClientRequest.ts";
+import type { InitializeParams } from "../generated/codex-protocol/ts/InitializeParams.ts";
 import type { ServerNotificationEnvelope } from "../generated/codex-protocol/ts/ServerNotificationEnvelope.ts";
 import type { ServerRequest } from "../generated/codex-protocol/ts/ServerRequest.ts";
+import { version } from "./version.ts";
 
 /** A server→client notification, carrying its `emittedAtMs` envelope. */
 export type Notification = ServerNotificationEnvelope;
@@ -81,6 +84,195 @@ export async function* lines(stream: AsyncIterable<Uint8Array>): AsyncIterable<s
       const line = buffer.slice(0, newline).trim();
       buffer = buffer.slice(newline + 1);
       if (line !== "") yield line;
+    }
+  }
+}
+
+/** A JSON-RPC-like frame on the wire: no `jsonrpc` field (see the README). */
+interface WireMessage {
+  readonly id?: string | number;
+  readonly method?: string;
+  readonly params?: unknown;
+  readonly result?: unknown;
+  readonly error?: { code: number; message: string; data?: unknown };
+}
+
+/**
+ * The real `AppServerConn` over a Bun unix socket.
+ *
+ * This is the one piece with no tidewaiter precedent (tidewaiter never writes to
+ * its socket outside `fetch`), so the duplex is hand-built: Bun's `data`/`close`
+ * callbacks feed an async queue that `lines()` drains, and outbound frames go out
+ * via `socket.write()`. One dispatch loop classifies every inbound frame:
+ *   - `id` + (`result`|`error`)  → resolve/reject a pending `request()`.
+ *   - `id` + `method`            → a server→client request: run the handler, and
+ *                                  write `{id, result}` back ONLY when its promise
+ *                                  settles — while the loop keeps draining. That
+ *                                  non-blocking reply is the anti-hang property.
+ *   - `method`, no `id`          → a notification: push to the feed.
+ */
+export class SocketAppServerConn implements AppServerConn {
+  private nextId = 1;
+  private readonly pending = new Map<string | number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
+  private handler?: (request: ServerRequest) => Promise<unknown>;
+  private readonly feed = new AsyncQueue<Notification>();
+
+  private constructor(private readonly socket: Socket) {}
+
+  /**
+   * Connect to the app-server control socket and complete the handshake, so
+   * callers get back a conn that is already initialized (`initialize` +
+   * `initialized`). Opting into `experimentalApi` unlocks the v2 methods.
+   */
+  static async connect(socketPath: string): Promise<SocketAppServerConn> {
+    let conn!: SocketAppServerConn;
+    const bytes = new AsyncQueue<Uint8Array>();
+
+    const socket = await Bun.connect({
+      unix: socketPath,
+      socket: {
+        data: (_socket, data) => bytes.push(new Uint8Array(data)),
+        close: () => bytes.close(),
+        error: (_socket, error) => bytes.fail(error),
+      },
+    });
+
+    conn = new SocketAppServerConn(socket);
+    void conn.dispatch(bytes); // the one read loop, kept alive for the socket's life
+
+    const params: InitializeParams = {
+      clientInfo: { name: "dragoman", title: "Dragoman", version },
+      capabilities: { experimentalApi: true, requestAttestation: false },
+    };
+    await conn.request("initialize", params);
+    conn.notify("initialized");
+    return conn;
+  }
+
+  request<M extends ClientRequest["method"]>(method: M, params: ParamsOf<M>): Promise<unknown> {
+    const id = this.nextId++;
+    return new Promise<unknown>((resolve, reject) => {
+      this.pending.set(id, { resolve, reject });
+      this.write({ id, method, params });
+    });
+  }
+
+  get notifications(): AsyncIterable<Notification> {
+    return this.feed;
+  }
+
+  onServerRequest(handler: (request: ServerRequest) => Promise<unknown>): void {
+    this.handler = handler;
+  }
+
+  /** Close the socket and abandon anything in flight. */
+  close(): void {
+    for (const { reject } of this.pending.values()) reject(new Error("connection closed"));
+    this.pending.clear();
+    this.feed.close();
+    this.socket.end();
+  }
+
+  /** The single inbound read loop: frame, classify, dispatch. */
+  private async dispatch(bytes: AsyncIterable<Uint8Array>): Promise<void> {
+    try {
+      for await (const line of lines(bytes)) {
+        let message: WireMessage;
+        try {
+          message = JSON.parse(line) as WireMessage;
+        } catch {
+          continue; // a garbled line is skipped rather than killing the loop
+        }
+        this.route(message);
+      }
+    } catch (error) {
+      // The socket errored; fail everything waiting so callers don't hang.
+      for (const { reject } of this.pending.values()) reject(error as Error);
+      this.pending.clear();
+    } finally {
+      this.feed.close();
+    }
+  }
+
+  private route(message: WireMessage): void {
+    if (message.id !== undefined && (message.result !== undefined || message.error !== undefined)) {
+      const waiter = this.pending.get(message.id);
+      if (!waiter) return;
+      this.pending.delete(message.id);
+      if (message.error) waiter.reject(new Error(`${message.error.code}: ${message.error.message}`));
+      else waiter.resolve(message.result);
+      return;
+    }
+
+    if (message.id !== undefined && message.method !== undefined) {
+      // A server→client request. Answer WITHOUT blocking the loop: the reply is
+      // written when the handler's promise settles; meanwhile we return and keep
+      // reading. This is the fix for the plugin's synchronous -32601 hang.
+      const id = message.id;
+      const request = message as unknown as ServerRequest;
+      const answer = this.handler ? this.handler(request) : Promise.resolve({ decision: "decline" });
+      void answer
+        .then((result) => this.write({ id, result }))
+        .catch((error: unknown) => this.write({ id, error: { code: -32603, message: (error as Error).message } }));
+      return;
+    }
+
+    if (message.method !== undefined) {
+      this.feed.push(message as Notification);
+    }
+  }
+
+  private notify(method: string): void {
+    this.write({ method });
+  }
+
+  private write(message: WireMessage): void {
+    this.socket.write(JSON.stringify(message) + "\n");
+  }
+}
+
+/**
+ * A minimal async queue bridging callback-driven producers (Bun's socket `data`
+ * callback, the frame router) to `for await` consumers. Buffers when the
+ * consumer is behind, parks when it is ahead, and ends cleanly on close/fail.
+ */
+class AsyncQueue<T> implements AsyncIterable<T> {
+  private readonly buffer: T[] = [];
+  private readonly waiters: { resolve: (r: IteratorResult<T>) => void; reject: (e: Error) => void }[] = [];
+  private ended = false;
+  private failure?: Error;
+
+  push(value: T): void {
+    if (this.ended) return;
+    const waiter = this.waiters.shift();
+    if (waiter) waiter.resolve({ value, done: false });
+    else this.buffer.push(value);
+  }
+
+  close(): void {
+    this.ended = true;
+    for (const waiter of this.waiters) waiter.resolve({ value: undefined, done: true });
+    this.waiters.length = 0;
+  }
+
+  fail(error: Error): void {
+    this.failure = error;
+    this.ended = true;
+    for (const waiter of this.waiters) waiter.reject(error);
+    this.waiters.length = 0;
+  }
+
+  async *[Symbol.asyncIterator](): AsyncIterator<T> {
+    for (;;) {
+      if (this.buffer.length > 0) {
+        yield this.buffer.shift()!;
+        continue;
+      }
+      if (this.failure) throw this.failure;
+      if (this.ended) return;
+      const result = await new Promise<IteratorResult<T>>((resolve, reject) => this.waiters.push({ resolve, reject }));
+      if (result.done) return;
+      yield result.value;
     }
   }
 }

@@ -13,6 +13,7 @@
  * implementation is responsible for translating that to/from an MCP form (an
  * enum field whose accepted values are these decision ids).
  */
+import type { ElicitRequestFormParams, ElicitResult } from "@modelcontextprotocol/sdk/types.js";
 
 /**
  * One approval question and the decisions the user may pick.
@@ -38,4 +39,49 @@ export interface Approval {
 export interface ElicitationChannel {
   /** Ask the human, resolving with the chosen decision id. Never rejects on a normal answer. */
   ask(approval: Approval): Promise<string>;
+}
+
+/**
+ * The real channel, over the MCP `Server`'s `elicitation/create`.
+ *
+ * The approval is surfaced as a one-field form: an enum whose values are the
+ * Codex decision ids Codex offered. Claude Code shows the prompt and the choices
+ * natively; the `{action:"accept", content:{decision}}` reply carries the picked
+ * decision id straight back (matching the shape the PLAN's probe verified). A
+ * `decline`/`cancel` action — the user dismissing the prompt — maps to Codex's
+ * `"cancel"`, so the pump always gets a valid decision to send on.
+ *
+ * The SDK's `Server` is imported only here (as a type); the pump depends on the
+ * `ElicitationChannel` interface above, never on the SDK.
+ */
+export class McpElicitationChannel implements ElicitationChannel {
+  constructor(private readonly server: Elicitor) {}
+
+  async ask(approval: Approval): Promise<string> {
+    const decisions = approval.decisions.length > 0 ? approval.decisions : ["accept", "decline"];
+    const result = await this.server.elicitInput({
+      message: approval.prompt,
+      requestedSchema: {
+        type: "object",
+        properties: {
+          decision: {
+            type: "string",
+            title: "Decision",
+            description: "How Codex should proceed.",
+            enum: [...decisions],
+          },
+        },
+        required: ["decision"],
+      },
+    });
+
+    if (result.action !== "accept") return "cancel";
+    const chosen = result.content?.decision;
+    return typeof chosen === "string" && decisions.includes(chosen) ? chosen : "cancel";
+  }
+}
+
+/** Just the one method of the SDK `Server` this channel needs — a `Server` satisfies it. */
+export interface Elicitor {
+  elicitInput(params: ElicitRequestFormParams): Promise<ElicitResult>;
 }
