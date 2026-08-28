@@ -14,6 +14,7 @@
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
+import { diagnostics } from "./diagnostics.ts";
 import type { ThreadRuns } from "./thread-run.ts";
 import { version } from "./version.ts";
 
@@ -40,6 +41,8 @@ export function buildServer(runs: ThreadRuns): Server {
         return text(await runCodex(runs, args ?? {}));
       case "codex_status":
         return text(statusCodex(runs, args ?? {}));
+      case "dragoman_diagnostics":
+        return text(diagnostics());
       default:
         return text(`unknown tool: ${name}`, true);
     }
@@ -48,9 +51,22 @@ export function buildServer(runs: ThreadRuns): Server {
   return server;
 }
 
-/** Attach the stdio transport and run until Claude Code closes the pipe. */
+/**
+ * Attach the stdio transport and run until Claude Code closes the pipe.
+ *
+ * `server.connect()` resolves once the transport is wired, NOT when it ends — so
+ * awaiting only that would let `main()` fall through and the process exit
+ * immediately. We wire the transport's `onclose` to a promise and await THAT, so
+ * the server stays alive for the life of the stdio connection (until Claude Code
+ * closes stdin).
+ */
 export async function serve(server: Server): Promise<void> {
-  await server.connect(new StdioServerTransport());
+  const transport = new StdioServerTransport();
+  const closed = new Promise<void>((resolve) => {
+    transport.onclose = () => resolve();
+  });
+  await server.connect(transport);
+  await closed;
 }
 
 const TOOLS = [
@@ -67,6 +83,15 @@ const TOOLS = [
       },
       required: ["prompt", "cwd"],
     },
+  },
+  {
+    // TEMPORARY: reports what the MCP subprocess actually sees at runtime, to
+    // ground the settings-mirroring design in real data (cwd? which CLAUDE_*
+    // env? which settings files reachable?) rather than assumptions. Remove once
+    // the mirroring transport is settled.
+    name: "dragoman_diagnostics",
+    description: "Diagnostic: report Dragoman's runtime environment (working directory, Claude Code env vars, reachable settings files). Used to design settings mirroring.",
+    inputSchema: { type: "object", properties: {} },
   },
   {
     name: "codex_status",

@@ -81,39 +81,39 @@ export async function main(argv: readonly string[]): Promise<number> {
 
   // Everything below stdout is the MCP channel to Claude Code — diagnostics go
   // to stderr so they never corrupt the protocol on stdout.
-  let conn: AppServerProcess;
-  try {
-    conn = await AppServerProcess.start(parsed.codexCommand);
-  } catch (error) {
-    console.error(
-      `Error: could not start Codex app-server (${parsed.codexCommand.join(" ")}): ${(error as Error).message}\n` +
-        `Is the \`codex\` CLI installed and on PATH?`,
-    );
-    return 1;
-  }
-  const runs = new ThreadRuns(conn);
+  //
+  // Codex is connected LAZILY: the MCP server must answer initialize/tools/list
+  // immediately, and a missing/broken codex should fail only a codex_run call,
+  // not the whole bridge. So ThreadRuns takes a connect thunk and spawns codex
+  // on the first run; the pump is wired onto the connection when it appears.
+  const controller = new AbortController();
+  let conn: AppServerProcess | undefined;
+
+  const runs = new ThreadRuns(
+    () => AppServerProcess.start(parsed.codexCommand),
+    (connected) => {
+      conn = connected as AppServerProcess;
+      // Wire the pump the moment the connection exists. Not awaited (it runs for
+      // the connection's life); a failure is logged to stderr, never left as an
+      // unhandled rejection that could take the MCP server down.
+      void startPump(connected, runs, elicitation, { signal: controller.signal }).catch((error: unknown) => {
+        console.error(`Dragoman pump stopped: ${(error as Error).message}`);
+      });
+    },
+  );
   const server = buildServer(runs);
   const elicitation = new McpElicitationChannel(server);
-
-  const controller = new AbortController();
-  // The pump runs for the life of the process; it is not on the critical path of
-  // any tool call, so it is not awaited here. But a failure — notably the feed
-  // failing when the codex subprocess dies — must be surfaced on stderr, not
-  // left as an unhandled rejection that could take the whole MCP server down.
-  void startPump(conn, runs, elicitation, { signal: controller.signal }).catch((error: unknown) => {
-    console.error(`Dragoman pump stopped: ${(error as Error).message}`);
-  });
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
       controller.abort();
-      conn.close();
+      conn?.close();
     });
   }
 
-  console.error(`Dragoman ${version} — bridging Codex via \`${parsed.codexCommand.join(" ")}\``);
+  console.error(`Dragoman ${version} — MCP server ready (Codex via \`${parsed.codexCommand.join(" ")}\`, connected on first use)`);
   await serve(server); // returns when Claude Code closes the stdio pipe
-  conn.close();
+  conn?.close();
   return 0;
 }
 

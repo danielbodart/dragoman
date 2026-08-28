@@ -12,9 +12,10 @@ function bridge(threadId = "t1") {
   const elicitation = new FakeElicitationChannel();
   conn.results["thread/start"] = [{ thread: { id: threadId } }];
   conn.results["turn/start"] = [{ turn: { id: "turn1" } }];
-  const runs = new ThreadRuns(conn, () => 1000);
-  const pump = startPump(conn, runs, elicitation);
-  return { conn, elicitation, runs, pump, threadId };
+  // Match production wiring: ThreadRuns connects lazily via the thunk and the
+  // pump is attached on connect. The fake is returned immediately.
+  const runs = new ThreadRuns(async () => conn, (c) => startPump(c, runs, elicitation), () => 1000);
+  return { conn, elicitation, runs, threadId };
 }
 
 function requestApproval(threadId: string, command: string): ServerRequest {
@@ -103,7 +104,8 @@ describe("the approval bridge — the anti-hang property", () => {
   });
 
   test("a file-change approval replies with a valid FileChangeApprovalDecision decline", async () => {
-    const { conn } = bridge();
+    const { conn, runs } = bridge();
+    await runs.start("do the thing", "/repo"); // wires the pump (connects lazily)
     const fileChange: ServerRequest = {
       method: "item/fileChange/requestApproval",
       id: 2,
@@ -114,7 +116,8 @@ describe("the approval bridge — the anti-hang property", () => {
   });
 
   test("currentTime/read is answered with the real time, not an approval decision", async () => {
-    const { conn } = bridge();
+    const { conn, runs } = bridge();
+    await runs.start("do the thing", "/repo");
     const before = Math.floor(Date.now() / 1000);
     const reply = (await conn.emitServerRequest({ method: "currentTime/read", id: 3, params: {} as never })) as { currentTimeAt: number };
     // It is a host service, not an approval — a {decision} reply would be a malformed result.
@@ -122,7 +125,8 @@ describe("the approval bridge — the anti-hang property", () => {
   });
 
   test("an unsupported server request throws (→ a JSON-RPC error frame), never a wrong-shaped result", async () => {
-    const { conn } = bridge();
+    const { conn, runs } = bridge();
+    await runs.start("do the thing", "/repo");
     // Host-service and other-shape requests must NOT get {decision:"decline"} —
     // that's a malformed result. Throwing makes the transport send a well-formed
     // error frame instead, which the server can act on.

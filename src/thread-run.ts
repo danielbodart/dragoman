@@ -27,11 +27,35 @@ export type RunSnapshot = Readonly<RunRecord>;
 export class ThreadRuns {
   /** Keyed by thread id, which is also the handle. The pump looks runs up the same way. */
   private readonly runs = new Map<RunHandle, RunRecord>();
+  private conn?: AppServerConn;
+  private connecting?: Promise<AppServerConn>;
 
+  /**
+   * Takes a `connect` thunk rather than a live connection, so the codex
+   * subprocess is spawned lazily on the first `start()` — not at MCP startup.
+   * That keeps the MCP server responsive to `initialize`/`tools/list`
+   * immediately, and means a missing/broken codex only fails a `codex_run`
+   * call (surfaced to that tool), never the whole server. `onConnect` lets the
+   * composition root wire the pump onto the connection the moment it exists.
+   */
   constructor(
-    private readonly conn: AppServerConn,
+    private readonly connect: () => Promise<AppServerConn>,
+    private readonly onConnect: (conn: AppServerConn) => void = () => {},
     private readonly now: () => number = Date.now,
   ) {}
+
+  /** Connect once, memoized — concurrent first calls share one in-flight connect. */
+  private async connection(): Promise<AppServerConn> {
+    if (this.conn) return this.conn;
+    if (!this.connecting) {
+      this.connecting = this.connect().then((conn) => {
+        this.conn = conn;
+        this.onConnect(conn);
+        return conn;
+      });
+    }
+    return this.connecting;
+  }
 
   /**
    * Start a Codex run and return its handle without waiting for it to finish.
@@ -45,8 +69,9 @@ export class ThreadRuns {
    * a rewrite.
    */
   async start(prompt: string, cwd: string): Promise<RunHandle> {
+    const conn = await this.connection();
     const params: ThreadStartParams = { cwd, approvalPolicy: "untrusted", sandbox: "workspace-write" };
-    const thread = (await this.conn.request("thread/start", params)) as ThreadStartResponse;
+    const thread = (await conn.request("thread/start", params)) as ThreadStartResponse;
     const handle = thread.thread.id;
 
     this.runs.set(handle, { handle, status: "starting" });
@@ -55,7 +80,7 @@ export class ThreadRuns {
     // here via the notification stream. A failure to even start the turn is
     // recorded on the run rather than thrown, since the caller has already been
     // promised a handle.
-    void this.conn
+    void conn
       .request("turn/start", { threadId: handle, input: [{ type: "text", text: prompt, text_elements: [] }] })
       .then((response) => {
         const turn = response as TurnStartResponse;
