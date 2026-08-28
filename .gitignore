@@ -1,0 +1,24 @@
+# Dependencies
+node_modules/
+
+# Bun
+.bun/
+bun.lockb.*
+
+# Build output
+dist/
+build/
+*.tsbuildinfo
+# Compiled single-binary output
+/dragoman
+/dragoman-*
+
+# Env / secrets
+.env
+.env.*
+
+# Editor / OS
+.DS_Store
+.idea/
+.vscode/
+*.log
