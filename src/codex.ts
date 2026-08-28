@@ -12,7 +12,7 @@
  * NDJSON — one JSON object per line, `\n`-terminated — in a JSON-RPC-*like*
  * dialect with no `jsonrpc` field.
  */
-import type { Socket } from "bun";
+import type { Subprocess } from "bun";
 import type { ClientRequest } from "../generated/codex-protocol/ts/ClientRequest.ts";
 import type { InitializeParams } from "../generated/codex-protocol/ts/InitializeParams.ts";
 import type { ServerNotificationEnvelope } from "../generated/codex-protocol/ts/ServerNotificationEnvelope.ts";
@@ -98,12 +98,18 @@ interface WireMessage {
 }
 
 /**
- * The real `AppServerConn` over a Bun unix socket.
+ * The real `AppServerConn`, over a `codex app-server` subprocess.
  *
- * This is the one piece with no tidewaiter precedent (tidewaiter never writes to
- * its socket outside `fetch`), so the duplex is hand-built: Bun's `data`/`close`
- * callbacks feed an async queue that `lines()` drains, and outbound frames go out
- * via `socket.write()`. One dispatch loop classifies every inbound frame:
+ * Transport note (verified against codex-cli 0.150.1): the plain-NDJSON endpoint
+ * is the bare `codex app-server` stdio server — NOT the control socket, and NOT
+ * `codex app-server proxy`, both of which speak a segmented remote-control
+ * envelope and silently drop plain NDJSON. So Dragoman spawns `codex app-server`
+ * and talks over its stdin/stdout.
+ *
+ * This duplex has no tidewaiter precedent (tidewaiter never writes to its socket
+ * outside `fetch`), so it is hand-built: the process's stdout stream feeds
+ * `lines()`, and outbound frames are written to its stdin. One dispatch loop
+ * classifies every inbound frame:
  *   - `id` + (`result`|`error`)  → resolve/reject a pending `request()`.
  *   - `id` + `method`            → a server→client request: run the handler, and
  *                                  write `{id, result}` back ONLY when its promise
@@ -111,34 +117,29 @@ interface WireMessage {
  *                                  non-blocking reply is the anti-hang property.
  *   - `method`, no `id`          → a notification: push to the feed.
  */
-export class SocketAppServerConn implements AppServerConn {
+export class AppServerProcess implements AppServerConn {
   private nextId = 1;
   private readonly pending = new Map<string | number, { resolve: (v: unknown) => void; reject: (e: Error) => void }>();
   private handler?: (request: ServerRequest) => Promise<unknown>;
   private readonly feed = new AsyncQueue<Notification>();
 
-  private constructor(private readonly socket: Socket) {}
+  private constructor(private readonly proc: Subprocess<"pipe", "pipe", "inherit">) {}
 
   /**
-   * Connect to the app-server control socket and complete the handshake, so
-   * callers get back a conn that is already initialized (`initialize` +
-   * `initialized`). Opting into `experimentalApi` unlocks the v2 methods.
+   * Spawn `codex app-server` and complete the handshake, so callers get back a
+   * conn that is already initialized (`initialize` + `initialized`). Opting into
+   * `experimentalApi` unlocks the v2 methods. `command` is injectable for tests
+   * and for pointing at a specific codex binary.
    */
-  static async connect(socketPath: string): Promise<SocketAppServerConn> {
-    let conn!: SocketAppServerConn;
-    const bytes = new AsyncQueue<Uint8Array>();
-
-    const socket = await Bun.connect({
-      unix: socketPath,
-      socket: {
-        data: (_socket, data) => bytes.push(new Uint8Array(data)),
-        close: () => bytes.close(),
-        error: (_socket, error) => bytes.fail(error),
-      },
+  static async start(command: readonly string[] = ["codex", "app-server"]): Promise<AppServerProcess> {
+    const proc = Bun.spawn(command as string[], {
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "inherit", // codex diagnostics pass through to our stderr, never onto the protocol
     });
 
-    conn = new SocketAppServerConn(socket);
-    void conn.dispatch(bytes); // the one read loop, kept alive for the socket's life
+    const conn = new AppServerProcess(proc);
+    void conn.dispatch(streamBytes(proc.stdout)); // the one read loop, alive for the process's life
 
     const params: InitializeParams = {
       clientInfo: { name: "dragoman", title: "Dragoman", version },
@@ -165,12 +166,12 @@ export class SocketAppServerConn implements AppServerConn {
     this.handler = handler;
   }
 
-  /** Close the socket and abandon anything in flight. */
+  /** Stop the subprocess and abandon anything in flight. */
   close(): void {
     for (const { reject } of this.pending.values()) reject(new Error("connection closed"));
     this.pending.clear();
     this.feed.close();
-    this.socket.end();
+    this.proc.kill();
   }
 
   /** The single inbound read loop: frame, classify, dispatch. */
@@ -186,7 +187,7 @@ export class SocketAppServerConn implements AppServerConn {
         this.route(message);
       }
     } catch (error) {
-      // The socket errored; fail everything waiting so callers don't hang.
+      // The process's stdout errored; fail everything waiting so callers don't hang.
       for (const { reject } of this.pending.values()) reject(error as Error);
       this.pending.clear();
     } finally {
@@ -227,7 +228,22 @@ export class SocketAppServerConn implements AppServerConn {
   }
 
   private write(message: WireMessage): void {
-    this.socket.write(JSON.stringify(message) + "\n");
+    this.proc.stdin.write(JSON.stringify(message) + "\n");
+    this.proc.stdin.flush();
+  }
+}
+
+/** Adapt a Bun ReadableStream (the subprocess stdout) to an AsyncIterable of chunks. */
+async function* streamBytes(stream: ReadableStream<Uint8Array>): AsyncIterable<Uint8Array> {
+  const reader = stream.getReader();
+  try {
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) return;
+      if (value) yield value;
+    }
+  } finally {
+    reader.releaseLock();
   }
 }
 

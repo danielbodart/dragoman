@@ -1,6 +1,4 @@
-import { homedir } from "node:os";
-import { join } from "node:path";
-import { SocketAppServerConn } from "./codex.ts";
+import { AppServerProcess } from "./codex.ts";
 import { McpElicitationChannel } from "./elicitation.ts";
 import { buildServer, serve } from "./mcp.ts";
 import { startPump } from "./pump.ts";
@@ -15,24 +13,24 @@ Commands:
   serve     Run as a stdio MCP server for Claude Code (default)
 
 Options:
-      --codex-socket PATH   Codex app-server control socket
-                            (default ~/.codex/app-server-control/app-server-control.sock)
+      --codex-command CMD   Codex app-server command to spawn
+                            (default "codex app-server")
       --version             Show the version and exit
   -h, --help                Show this message
 `;
 
 interface Parsed {
   readonly command: string;
-  readonly codexSocket: string;
+  readonly codexCommand: readonly string[];
   readonly help: boolean;
   readonly showVersion: boolean;
 }
 
-const DEFAULT_SOCKET = join(homedir(), ".codex", "app-server-control", "app-server-control.sock");
+const DEFAULT_CODEX_COMMAND = ["codex", "app-server"];
 
 export function parseArguments(argv: readonly string[], env: Record<string, string | undefined> = {}): Parsed {
   let command = "serve";
-  let codexSocket = env.CODEX_APP_SERVER_SOCKET ?? DEFAULT_SOCKET;
+  let codexCommand = env.DRAGOMAN_CODEX_COMMAND ? env.DRAGOMAN_CODEX_COMMAND.split(" ") : DEFAULT_CODEX_COMMAND;
   let help = false;
   let showVersion = false;
 
@@ -45,7 +43,7 @@ export function parseArguments(argv: readonly string[], env: Record<string, stri
       return next;
     };
     switch (argument) {
-      case "--codex-socket": codexSocket = value(); break;
+      case "--codex-command": codexCommand = value().split(" "); break;
       case "--version": showVersion = true; break;
       case "-h": case "--help": help = true; break;
       default:
@@ -54,7 +52,7 @@ export function parseArguments(argv: readonly string[], env: Record<string, stri
     }
   }
 
-  return { command, codexSocket, help, showVersion };
+  return { command, codexCommand, help, showVersion };
 }
 
 export async function main(argv: readonly string[]): Promise<number> {
@@ -83,15 +81,16 @@ export async function main(argv: readonly string[]): Promise<number> {
 
   // Everything below stdout is the MCP channel to Claude Code — diagnostics go
   // to stderr so they never corrupt the protocol on stdout.
-  if (!(await Bun.file(parsed.codexSocket).exists())) {
+  let conn: AppServerProcess;
+  try {
+    conn = await AppServerProcess.start(parsed.codexCommand);
+  } catch (error) {
     console.error(
-      `Error: no Codex app-server control socket at ${parsed.codexSocket}.\n` +
-        `Start the daemon first: codex app-server daemon start`,
+      `Error: could not start Codex app-server (${parsed.codexCommand.join(" ")}): ${(error as Error).message}\n` +
+        `Is the \`codex\` CLI installed and on PATH?`,
     );
     return 1;
   }
-
-  const conn = await SocketAppServerConn.connect(parsed.codexSocket);
   const runs = new ThreadRuns(conn);
   const server = buildServer(runs);
   const elicitation = new McpElicitationChannel(server);
@@ -106,7 +105,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     });
   }
 
-  console.error(`Dragoman ${version} — bridging Codex at ${parsed.codexSocket}`);
+  console.error(`Dragoman ${version} — bridging Codex via \`${parsed.codexCommand.join(" ")}\``);
   await serve(server); // returns when Claude Code closes the stdio pipe
   conn.close();
   return 0;

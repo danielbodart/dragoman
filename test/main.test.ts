@@ -2,21 +2,21 @@ import { describe, expect, test } from "bun:test";
 import { parseArguments } from "../src/main.ts";
 
 describe("parseArguments", () => {
-  test("defaults to the serve command and the standard control socket", () => {
+  test("defaults to the serve command and the `codex app-server` command", () => {
     const parsed = parseArguments([], {});
     expect(parsed.command).toBe("serve");
-    expect(parsed.codexSocket).toMatch(/\.codex\/app-server-control\/app-server-control\.sock$/);
+    expect(parsed.codexCommand).toEqual(["codex", "app-server"]);
     expect(parsed.help).toBe(false);
     expect(parsed.showVersion).toBe(false);
   });
 
-  test("CODEX_APP_SERVER_SOCKET overrides the default socket", () => {
-    expect(parseArguments([], { CODEX_APP_SERVER_SOCKET: "/tmp/cx.sock" }).codexSocket).toBe("/tmp/cx.sock");
+  test("DRAGOMAN_CODEX_COMMAND overrides the default command", () => {
+    expect(parseArguments([], { DRAGOMAN_CODEX_COMMAND: "/opt/codex app-server" }).codexCommand).toEqual(["/opt/codex", "app-server"]);
   });
 
-  test("--codex-socket beats the env override", () => {
-    const parsed = parseArguments(["--codex-socket", "/run/flag.sock"], { CODEX_APP_SERVER_SOCKET: "/tmp/env.sock" });
-    expect(parsed.codexSocket).toBe("/run/flag.sock");
+  test("--codex-command beats the env override", () => {
+    const parsed = parseArguments(["--codex-command", "mycodex app-server"], { DRAGOMAN_CODEX_COMMAND: "codex app-server" });
+    expect(parsed.codexCommand).toEqual(["mycodex", "app-server"]);
   });
 
   test("--version and --help are recognised", () => {
@@ -33,6 +33,6 @@ describe("parseArguments", () => {
   });
 
   test("a flag missing its value is rejected", () => {
-    expect(() => parseArguments(["--codex-socket"], {})).toThrow(/needs a value/);
+    expect(() => parseArguments(["--codex-command"], {})).toThrow(/needs a value/);
   });
 });

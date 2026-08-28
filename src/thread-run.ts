@@ -36,14 +36,16 @@ export class ThreadRuns {
   /**
    * Start a Codex run and return its handle without waiting for it to finish.
    *
-   * For this slice the thread's policy is fixed to something that will actually
-   * trigger an approval — `approvalPolicy: "on-request"` under a `workspace-write`
-   * sandbox — so the bridge under test has a real approval to answer. Settings
-   * mirroring (reading Claude's own posture) is roadmap step 2 and slots in here
-   * as the params passed to `thread/start`, not a rewrite.
+   * For this slice the thread's policy is fixed to `approvalPolicy: "untrusted"`
+   * under a `workspace-write` sandbox: `untrusted` asks before *every* command,
+   * so the approval bridge is always exercised — verified live, where
+   * `on-request` let sandbox-permitted commands (writes to /tmp, even network)
+   * through without asking. Settings mirroring (reading Claude's own posture) is
+   * roadmap step 2 and slots in here as the params passed to `thread/start`, not
+   * a rewrite.
    */
   async start(prompt: string, cwd: string): Promise<RunHandle> {
-    const params: ThreadStartParams = { cwd, approvalPolicy: "on-request", sandbox: "workspace-write" };
+    const params: ThreadStartParams = { cwd, approvalPolicy: "untrusted", sandbox: "workspace-write" };
     const thread = (await this.conn.request("thread/start", params)) as ThreadStartResponse;
     const handle = thread.thread.id;
 

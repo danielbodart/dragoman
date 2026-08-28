@@ -59,7 +59,7 @@ describe("codex_run / codex_status", () => {
     const { conn, runs } = bridge();
     await runs.start("do the thing", "/repo");
     const start = conn.requests.find((r) => r.method === "thread/start");
-    expect(start?.params).toMatchObject({ cwd: "/repo", approvalPolicy: "on-request", sandbox: "workspace-write" });
+    expect(start?.params).toMatchObject({ cwd: "/repo", approvalPolicy: "untrusted", sandbox: "workspace-write" });
   });
 
   test("status is a no-IO snapshot and reflects the latest heartbeat", async () => {
