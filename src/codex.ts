@@ -71,7 +71,8 @@ export interface AppServerConn {
  * This is the one framing job tidewaiter gets for free from `fetch` and Dragoman
  * must own itself (PLAN §7): the app-server delivers bytes in arbitrary chunks,
  * not whole lines, so partial lines are held back across chunks. Ported from
- * tidewaiter's docker.ts `lines()`. Shared by both wire edges' framing.
+ * tidewaiter's docker.ts `lines()`. Only the Codex edge needs this — the MCP
+ * edge hands framing to the SDK's `StdioServerTransport`.
  */
 export async function* lines(stream: AsyncIterable<Uint8Array>): AsyncIterable<string> {
   const decoder = new TextDecoder();
@@ -176,6 +177,7 @@ export class AppServerProcess implements AppServerConn {
 
   /** The single inbound read loop: frame, classify, dispatch. */
   private async dispatch(bytes: AsyncIterable<Uint8Array>): Promise<void> {
+    let failure: Error | undefined;
     try {
       for await (const line of lines(bytes)) {
         let message: WireMessage;
@@ -187,11 +189,18 @@ export class AppServerProcess implements AppServerConn {
         this.route(message);
       }
     } catch (error) {
-      // The process's stdout errored; fail everything waiting so callers don't hang.
-      for (const { reject } of this.pending.values()) reject(error as Error);
-      this.pending.clear();
+      failure = error as Error;
     } finally {
-      this.feed.close();
+      // The subprocess ended — whether by a stdout error OR a clean EOF (the
+      // normal way an exit presents, where the `for await` completes without
+      // throwing). EITHER way, everything in flight must be failed, or a pending
+      // request() hangs forever: the exact hang this project exists to remove,
+      // recreated on the subprocess-death path. So this lives in `finally`, not
+      // the `catch`, and fails the feed too so the pump loop sees it.
+      const error = failure ?? new Error("codex app-server exited");
+      for (const { reject } of this.pending.values()) reject(error);
+      this.pending.clear();
+      this.feed.fail(error);
     }
   }
 
@@ -211,10 +220,15 @@ export class AppServerProcess implements AppServerConn {
       // reading. This is the fix for the plugin's synchronous -32601 hang.
       const id = message.id;
       const request = message as unknown as ServerRequest;
-      const answer = this.handler ? this.handler(request) : Promise.resolve({ decision: "decline" });
+      // No handler yet → a JSON-RPC error, not a guessed `{decision}` result:
+      // we can't know the right response shape for this method, and a wrong
+      // result is worse than a well-formed error the server can act on.
+      const answer = this.handler
+        ? this.handler(request)
+        : Promise.reject(new Error("no server-request handler registered"));
       void answer
         .then((result) => this.write({ id, result }))
-        .catch((error: unknown) => this.write({ id, error: { code: -32603, message: (error as Error).message } }));
+        .catch((error: unknown) => this.write({ id, error: { code: -32603, message: errorMessage(error) } }));
       return;
     }
 
@@ -228,9 +242,22 @@ export class AppServerProcess implements AppServerConn {
   }
 
   private write(message: WireMessage): void {
-    this.proc.stdin.write(JSON.stringify(message) + "\n");
-    this.proc.stdin.flush();
+    // A write can lose its race with shutdown: an approval handler may resolve
+    // (and try to reply) after close() has killed the subprocess. That is
+    // expected here, not exceptional — swallow the resulting write error rather
+    // than letting it surface as an unhandled rejection from route()'s reply chain.
+    try {
+      this.proc.stdin.write(JSON.stringify(message) + "\n");
+      this.proc.stdin.flush();
+    } catch {
+      // subprocess already gone; nothing to write to
+    }
   }
+}
+
+/** A message string for any thrown value, not just an `Error` (a thrown string would read undefined). */
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 /** Adapt a Bun ReadableStream (the subprocess stdout) to an AsyncIterable of chunks. */
@@ -266,12 +293,14 @@ class AsyncQueue<T> implements AsyncIterable<T> {
   }
 
   close(): void {
+    if (this.ended) return; // first ending wins; a later fail() can't reopen a clean close
     this.ended = true;
     for (const waiter of this.waiters) waiter.resolve({ value: undefined, done: true });
     this.waiters.length = 0;
   }
 
   fail(error: Error): void {
+    if (this.ended) return; // idempotent: a clean close() already ended us, don't turn it into a failure
     this.failure = error;
     this.ended = true;
     for (const waiter of this.waiters) waiter.reject(error);

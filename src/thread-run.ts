@@ -87,7 +87,11 @@ export class ThreadRuns {
 
   private fail(handle: RunHandle, message: string): void {
     const run = this.runs.get(handle);
-    if (run) {
+    // Only fail a run still in its opening phase. A late-settling turn/start
+    // rejection must not stomp a run the pump has already legitimately advanced
+    // (to waiting-approval, or even done via notifications) back to error —
+    // mirroring the same guard the success path uses ("starting" -> "running").
+    if (run && (run.status === "starting" || run.status === "running")) {
       run.status = "error";
       run.error = message;
     }

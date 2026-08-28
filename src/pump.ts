@@ -37,28 +37,56 @@ export function startPump(
   elicitation: ElicitationChannel,
   options: { signal?: AbortSignal } = {},
 ): Promise<void> {
-  conn.onServerRequest((request) => handleApproval(request, runs, elicitation));
+  conn.onServerRequest((request) => handleServerRequest(request, runs, elicitation));
   return runNotifications(conn, runs, options.signal);
 }
 
 /**
- * Turn one server→client request into a decision.
+ * Answer one server→client request.
  *
- * Only command-execution approvals are handled for this slice; the other
- * server-request kinds (file-change, permissions, elicitation passthrough, host
- * services) are declined safely rather than left unanswered — an unanswered
- * request is the hang, so "decline" is the correct floor until each is built out.
+ * Every reply must be the shape the SERVER expects for that method (each
+ * `ServerRequest` variant has its own response type in the generated protocol),
+ * so a single blanket `{decision: "decline"}` is wrong — for host-service
+ * requests it is a malformed result that could break Codex, and the legacy
+ * approval methods don't even have a `"decline"` variant. So we dispatch:
+ *
+ *  - command / file-change approvals → a correctly-typed `{decision}` reply
+ *    (command routes through the human via elicitation; file-change declines for
+ *    now, which is `FileChangeApprovalDecision`'s valid "no").
+ *  - `currentTime/read` → the real time; it's a host service, not an approval,
+ *    trivial and safe to answer correctly.
+ *  - everything else (permissions, tool-call/user-input, mcp elicitation
+ *    passthrough, auth/attestation host services, legacy approval methods) →
+ *    THROW, so the transport sends a well-formed JSON-RPC error frame. An error
+ *    is a valid response the server can act on; a wrong-shaped `result` is not.
+ *    Answering these properly is future work, but erroring is protocol-correct
+ *    and still never leaves the request unanswered (never hangs).
  */
-async function handleApproval(
+async function handleServerRequest(
   request: ServerRequest,
   runs: ThreadRuns,
   elicitation: ElicitationChannel,
 ): Promise<unknown> {
-  if (request.method !== "item/commandExecution/requestApproval") {
-    return { decision: "decline" };
+  switch (request.method) {
+    case "item/commandExecution/requestApproval":
+      return handleCommandApproval(request.params, runs, elicitation);
+    case "item/fileChange/requestApproval":
+      // A real, correctly-typed decline (FileChangeApprovalDecision). Surfacing
+      // this as an elicitation too is the natural next step.
+      return { decision: "decline" };
+    case "currentTime/read":
+      return { currentTimeAt: Math.floor(Date.now() / 1000) };
+    default:
+      throw new Error(`unsupported server request: ${request.method}`);
   }
+}
 
-  const params = request.params;
+/** Command-execution approval: route it through the human and return the decision. */
+async function handleCommandApproval(
+  params: CommandExecutionRequestApprovalParams,
+  runs: ThreadRuns,
+  elicitation: ElicitationChannel,
+): Promise<unknown> {
   const run = runs.record(params.threadId);
   if (run) run.status = "waiting-approval";
 

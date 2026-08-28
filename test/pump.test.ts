@@ -102,14 +102,34 @@ describe("the approval bridge — the anti-hang property", () => {
     expect(runs.status(threadId)?.status).toBe("running");
   });
 
-  test("a non-command server request is safely declined, never left unanswered", async () => {
+  test("a file-change approval replies with a valid FileChangeApprovalDecision decline", async () => {
     const { conn } = bridge();
     const fileChange: ServerRequest = {
       method: "item/fileChange/requestApproval",
       id: 2,
       params: { threadId: "t1", turnId: "turn1", itemId: "f1" } as never,
     };
+    // "decline" IS a valid FileChangeApprovalDecision, so a plain decision reply is correct here.
     expect(await conn.emitServerRequest(fileChange)).toEqual({ decision: "decline" });
+  });
+
+  test("currentTime/read is answered with the real time, not an approval decision", async () => {
+    const { conn } = bridge();
+    const before = Math.floor(Date.now() / 1000);
+    const reply = (await conn.emitServerRequest({ method: "currentTime/read", id: 3, params: {} as never })) as { currentTimeAt: number };
+    // It is a host service, not an approval — a {decision} reply would be a malformed result.
+    expect(reply.currentTimeAt).toBeGreaterThanOrEqual(before);
+  });
+
+  test("an unsupported server request throws (→ a JSON-RPC error frame), never a wrong-shaped result", async () => {
+    const { conn } = bridge();
+    // Host-service and other-shape requests must NOT get {decision:"decline"} —
+    // that's a malformed result. Throwing makes the transport send a well-formed
+    // error frame instead, which the server can act on.
+    for (const method of ["account/chatgptAuthTokens/refresh", "item/tool/call", "execCommandApproval"] as const) {
+      const request = { method, id: 9, params: {} as never } as unknown as ServerRequest;
+      await expect(conn.emitServerRequest(request)).rejects.toThrow(/unsupported server request/);
+    }
   });
 
   test("a completed turn carries the final agent message as the result", async () => {

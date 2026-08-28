@@ -96,7 +96,13 @@ export async function main(argv: readonly string[]): Promise<number> {
   const elicitation = new McpElicitationChannel(server);
 
   const controller = new AbortController();
-  startPump(conn, runs, elicitation, { signal: controller.signal });
+  // The pump runs for the life of the process; it is not on the critical path of
+  // any tool call, so it is not awaited here. But a failure — notably the feed
+  // failing when the codex subprocess dies — must be surfaced on stderr, not
+  // left as an unhandled rejection that could take the whole MCP server down.
+  void startPump(conn, runs, elicitation, { signal: controller.signal }).catch((error: unknown) => {
+    console.error(`Dragoman pump stopped: ${(error as Error).message}`);
+  });
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
