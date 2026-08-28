@@ -15,6 +15,8 @@
  * `codex_status` tool) touches no I/O at all: it is a map read of whatever the
  * pump last wrote.
  */
+import { mirror, resolveMode } from "./mirror.ts";
+import { readSettings, type EffectiveSettings } from "./settings.ts";
 import type { AppServerConn } from "./codex.ts";
 import type { RunHandle, RunRecord } from "./model.ts";
 import type { ThreadStartParams } from "../generated/codex-protocol/ts/v2/ThreadStartParams.ts";
@@ -42,6 +44,8 @@ export class ThreadRuns {
     private readonly connect: () => Promise<AppServerConn>,
     private readonly onConnect: (conn: AppServerConn) => void = () => {},
     private readonly now: () => number = Date.now,
+    /** Injectable so the mirror is tested against fixture settings, not the real disk. */
+    private readonly readSettings: () => EffectiveSettings = () => readSettings(),
   ) {}
 
   /** Connect once, memoized — concurrent first calls share one in-flight connect. */
@@ -60,17 +64,20 @@ export class ThreadRuns {
   /**
    * Start a Codex run and return its handle without waiting for it to finish.
    *
-   * For this slice the thread's policy is fixed to `approvalPolicy: "untrusted"`
-   * under a `workspace-write` sandbox: `untrusted` asks before *every* command,
-   * so the approval bridge is always exercised — verified live, where
-   * `on-request` let sandbox-permitted commands (writes to /tmp, even network)
-   * through without asking. Settings mirroring (reading Claude's own posture) is
-   * roadmap step 2 and slots in here as the params passed to `thread/start`, not
-   * a rewrite.
+   * The thread's policy MIRRORS Claude (PLAN §10): the merged Claude settings and
+   * the resolved posture (an explicit `posture` Claude passed ?? the static
+   * `defaultMode` ?? a safe default) map to Codex's approval + sandbox knobs.
+   * `thread/start` takes the enum `sandbox`; the structured `sandboxPolicy`
+   * (carrying writable roots + network) rides on `turn/start`, where the object
+   * form is accepted.
    */
-  async start(prompt: string, cwd: string): Promise<RunHandle> {
+  async start(prompt: string, cwd: string, posture?: string): Promise<RunHandle> {
     const conn = await this.connection();
-    const params: ThreadStartParams = { cwd, approvalPolicy: "untrusted", sandbox: "workspace-write" };
+    const settings = this.readSettings();
+    const mode = resolveMode(settings, posture);
+    const policy = mirror(settings, mode, cwd);
+
+    const params: ThreadStartParams = { cwd, approvalPolicy: policy.approvalPolicy, sandbox: policy.sandbox };
     const thread = (await conn.request("thread/start", params)) as ThreadStartResponse;
     const handle = thread.thread.id;
 
@@ -79,9 +86,15 @@ export class ThreadRuns {
     // Kick the turn off; do NOT await its completion. The pump drives it from
     // here via the notification stream. A failure to even start the turn is
     // recorded on the run rather than thrown, since the caller has already been
-    // promised a handle.
+    // promised a handle. The structured sandboxPolicy (writable roots, network)
+    // rides here, where Codex accepts the object form.
     void conn
-      .request("turn/start", { threadId: handle, input: [{ type: "text", text: prompt, text_elements: [] }] })
+      .request("turn/start", {
+        threadId: handle,
+        input: [{ type: "text", text: prompt, text_elements: [] }],
+        approvalPolicy: policy.approvalPolicy,
+        sandboxPolicy: policy.sandboxPolicy,
+      })
       .then((response) => {
         const turn = response as TurnStartResponse;
         const run = this.runs.get(handle);

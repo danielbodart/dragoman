@@ -13,6 +13,8 @@
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { mirror, resolveMode } from "./mirror.ts";
+import { readSettings } from "./settings.ts";
 
 export function diagnostics(): string {
   const lines: string[] = [];
@@ -66,6 +68,32 @@ export function diagnostics(): string {
       lines.push("     sandbox: " + summarizeSandbox(parsed.sandbox));
     } catch (error) {
       lines.push("     present but unreadable: " + (error as Error).message);
+    }
+  }
+
+  // The live end-to-end result: what Dragoman would actually mirror onto Codex
+  // right now, for each posture. This is the settings-mirror pipeline (PLAN §10)
+  // exercised against the real merged settings.
+  lines.push("");
+  lines.push("=== Mirror preview (effective settings → Codex policy) ===");
+  const settings = readSettings(process.env);
+  lines.push("effective: " + JSON.stringify({
+    defaultMode: settings.defaultMode,
+    allow: settings.allow.length,
+    deny: settings.deny.length,
+    additionalDirectories: settings.additionalDirectories,
+    sandboxEnabled: settings.sandboxEnabled,
+    allowedDomains: settings.allowedDomains.length,
+  }));
+  const cwd = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
+  for (const posture of [undefined, "plan", "bypassPermissions"]) {
+    const mode = resolveMode(settings, posture);
+    const policy = mirror(settings, mode, cwd);
+    lines.push(`  posture=${posture ?? "(none→static)"} → mode=${mode}:`);
+    lines.push(`     approvalPolicy=${JSON.stringify(policy.approvalPolicy)}  sandbox=${policy.sandbox}`);
+    lines.push(`     sandboxPolicy=${JSON.stringify(policy.sandboxPolicy)}`);
+    if (policy.execpolicyAmendments.length > 0) {
+      lines.push(`     execpolicyAmendments=${JSON.stringify(policy.execpolicyAmendments)}`);
     }
   }
 

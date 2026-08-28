@@ -4,7 +4,15 @@ import { ThreadRuns } from "../src/thread-run.ts";
 import { FakeAppServer } from "./fakes/app-server.ts";
 import { FakeElicitationChannel } from "./fakes/elicitation.ts";
 import type { Notification, ServerRequest } from "../src/codex.ts";
+import type { EffectiveSettings } from "../src/settings.ts";
 import type { ThreadItem } from "../generated/codex-protocol/ts/v2/ThreadItem.ts";
+
+/** Empty effective settings, so the mirror falls to a deterministic safe default in tests. */
+const emptySettings = (): EffectiveSettings => ({
+  allow: [], deny: [], ask: [], additionalDirectories: [],
+  denyRead: [], denyWrite: [], allowRead: [], allowWrite: [],
+  allowedDomains: [], deniedDomains: [],
+});
 
 /** Wire a bridge over fakes with a canned thread/start + turn/start, ready to drive. */
 function bridge(threadId = "t1") {
@@ -14,7 +22,7 @@ function bridge(threadId = "t1") {
   conn.results["turn/start"] = [{ turn: { id: "turn1" } }];
   // Match production wiring: ThreadRuns connects lazily via the thunk and the
   // pump is attached on connect. The fake is returned immediately.
-  const runs = new ThreadRuns(async () => conn, (c) => startPump(c, runs, elicitation), () => 1000);
+  const runs = new ThreadRuns(async () => conn, (c) => startPump(c, runs, elicitation), () => 1000, emptySettings);
   return { conn, elicitation, runs, threadId };
 }
 
@@ -56,11 +64,20 @@ describe("codex_run / codex_status", () => {
     expect(runs.status(handle)?.status).not.toBe("done");
   });
 
-  test("thread/start carries the fixed slice policy that will trigger approvals", async () => {
+  test("thread/start mirrors the resolved posture (empty settings → safe default)", async () => {
     const { conn, runs } = bridge();
     await runs.start("do the thing", "/repo");
     const start = conn.requests.find((r) => r.method === "thread/start");
-    expect(start?.params).toMatchObject({ cwd: "/repo", approvalPolicy: "untrusted", sandbox: "workspace-write" });
+    // Empty settings + no posture → mode "default" → on-request under workspace-write.
+    expect(start?.params).toMatchObject({ cwd: "/repo", approvalPolicy: "on-request", sandbox: "workspace-write" });
+  });
+
+  test("an explicit posture overrides the static default", async () => {
+    const { conn, runs } = bridge();
+    await runs.start("plan it", "/repo", "plan");
+    const start = conn.requests.find((r) => r.method === "thread/start");
+    // plan → untrusted (ask before acting) + read-only.
+    expect(start?.params).toMatchObject({ cwd: "/repo", approvalPolicy: "untrusted", sandbox: "read-only" });
   });
 
   test("status is a no-IO snapshot and reflects the latest heartbeat", async () => {

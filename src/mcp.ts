@@ -80,6 +80,15 @@ const TOOLS = [
       properties: {
         prompt: { type: "string", description: "What Codex should do." },
         cwd: { type: "string", description: "Working directory for the task (absolute path)." },
+        posture: {
+          type: "string",
+          enum: ["plan", "default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"],
+          description:
+            "Optional: the current Claude Code permission posture, so Codex is run to match it. " +
+            "Pass the mode you are operating under (e.g. 'plan' for read-only planning, " +
+            "'bypassPermissions' when the user has waved you through). If omitted, Dragoman " +
+            "mirrors the static defaultMode from Claude's settings.",
+        },
       },
       required: ["prompt", "cwd"],
     },
@@ -107,8 +116,9 @@ const TOOLS = [
 async function runCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<string> {
   const prompt = String(args.prompt ?? "");
   const cwd = String(args.cwd ?? "");
+  const posture = typeof args.posture === "string" ? args.posture : undefined;
   if (!prompt || !cwd) return "codex_run needs both `prompt` and `cwd`.";
-  const handle = await runs.start(prompt, cwd);
+  const handle = await runs.start(prompt, cwd, posture);
   return `Started Codex task. Poll codex_status with handle "${handle}".`;
 }
 
