@@ -65,23 +65,25 @@ export function profileIdForBase(base: string): string {
  * The Codex profile base for this run — or `undefined` for **no profile**, meaning
  * `danger-full-access` (no OS sandbox).
  *
- * Scope is the **sandbox axis**, derived from Claude's sandbox config, NOT from the
- * permission mode (that's the orthogonal approval axis):
+ *   - `plan` → `:read-only` — a read-only intent.
+ *   - never-ask modes (`bypassPermissions` / `dontAsk`) → `undefined` →
+ *     `danger-full-access`: Claude won't stop to judge anything, so there's nothing
+ *     to review; run unconfined.
+ *   - every JUDGED mode (`default` / `manual` / `acceptEdits` / `auto`) →
+ *     `:workspace` — **even when Claude isn't sandboxing**. The sandbox is the
+ *     review *trigger*: an escape past it is what raises Codex's approval review
+ *     (verified — no sandbox means the classifier never runs). The reviewer then
+ *     grants the escapes (`user` → the human, `auto_review` → Codex's model), so
+ *     the net effect is unconfined-but-judged, mirroring Claude. The
+ *     `filesystem`/`network` tables refine the workspace when Claude IS sandboxing.
  *
- *   - `plan` → `:read-only` — a read-only *intent*, regardless of sandbox.
- *   - sandbox ON  → `:workspace` — Claude confines bash, so Codex does too (the
- *     `filesystem`/`network` tables refine it).
- *   - sandbox OFF → `undefined` → `danger-full-access` — Claude imposes no OS
- *     sandbox on its bash, so neither do we. Mirroring more restrictively than
- *     Claude is the one direction we never go.
- *
- * Approval (ask/never) rides the separate `approvalPolicy` axis, so e.g.
- * `bypassPermissions` under an active sandbox is still `:workspace` (confined) with
- * `never` approvals — not danger.
+ * So scope is not purely sandbox-derived: a judged mode forces `:workspace`
+ * regardless of `sandboxEnabled`. See docs/POLICY-COMPILER.md.
  */
-function baseFor(settings: EffectiveSettings, mode: ClaudeMode): string | undefined {
+function baseFor(_settings: EffectiveSettings, mode: ClaudeMode): string | undefined {
   if (mode === "plan") return ":read-only";
-  return settings.sandboxEnabled ? ":workspace" : undefined;
+  if (mode === "bypassPermissions" || mode === "dontAsk") return undefined; // danger-full-access
+  return ":workspace";
 }
 
 /**
@@ -209,7 +211,19 @@ function asMode(value: string | undefined): ClaudeMode | undefined {
   }
 }
 
-/** Mode → Codex approval policy (PLAN §10.3). */
+/**
+ * The `granular` approval policy that raises sandbox escapes for review.
+ *
+ * `on-request` leaves escalation to the model's discretion and (verified) does NOT
+ * turn a sandbox denial into an approval event, so the review never fires. `granular`
+ * with these toggles on DOES raise the escape — which is then adjudicated by the
+ * `approvalsReviewer` (`user` → human, `auto_review` → Codex's model).
+ */
+const GRANULAR: AskForApproval = {
+  granular: { sandbox_approval: true, request_permissions: true, rules: true, skill_approval: true, mcp_elicitations: true },
+};
+
+/** Mode → Codex approval policy. */
 function approvalFor(mode: ClaudeMode): AskForApproval {
   switch (mode) {
     case "plan":
@@ -221,23 +235,36 @@ function approvalFor(mode: ClaudeMode): AskForApproval {
     case "manual":
     case "acceptEdits":
     case "auto":
-      return "on-request"; // ask when Codex hits something the sandbox can't cover
+      return GRANULAR; // raise sandbox escapes so the reviewer (human/model) can judge
   }
 }
 
 /**
- * Mode → who adjudicates approval escalations.
+ * Mode → who adjudicates a raised approval (verified against codex-cli 0.150.1).
  *
- * `auto` is Claude's model-judged mode, so its faithful analog is Codex's model
- * reviewer, `auto_review` — it classifies escalations (sandbox escapes, blocked
- * network, …) with a risk framework rather than gating the human. Every other
- * mode leaves the reviewer at Codex's default (`user` → the human elicitation
- * seam): `plan`/`default`/`acceptEdits` prompt the human, `bypass`/`dontAsk`
- * never ask so a reviewer is moot. Routing to Claude's OWN model is not an
- * option — Claude Code advertises no MCP sampling (see the recorded finding).
+ *   - `auto` → `auto_review`: Codex's model judges escapes with a risk framework —
+ *     the faithful analog of Claude's auto classifier.
+ *   - `default`/`manual`/`acceptEdits` → `user`: escapes route to the CLIENT
+ *     (`item/…/requestApproval`) → our elicitation → the human. NOTE: this must be
+ *     set EXPLICITLY — leaving it unset uses the internal agent review (self-
+ *     approves), NOT the human, despite the protocol doc's "defaults to user".
+ *   - `plan`/`bypassPermissions`/`dontAsk` → none (read-only, or never-ask).
+ *
+ * Routing to Claude's OWN model isn't an option — Claude Code advertises no MCP
+ * sampling (see the recorded finding). And the reviewer only bites under a sandbox
+ * + `granular` policy: without a sandbox there's no escape to review.
  */
 function reviewerFor(mode: ClaudeMode): ApprovalsReviewer | undefined {
-  return mode === "auto" ? "auto_review" : undefined;
+  switch (mode) {
+    case "auto":
+      return "auto_review"; // Codex's model judges escapes (mirrors Claude's auto classifier)
+    case "default":
+    case "manual":
+    case "acceptEdits":
+      return "user"; // route escapes to the human via the elicitation seam
+    default:
+      return undefined; // plan / bypassPermissions / dontAsk: no reviewer needed
+  }
 }
 
 /**

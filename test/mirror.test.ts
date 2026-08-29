@@ -31,15 +31,21 @@ describe("resolveMode (the three-tier posture)", () => {
   });
 });
 
-// Two orthogonal axes (docs/POLICY-COMPILER.md): the permission MODE drives the
-// approval policy; the SANDBOX config drives the OS scope. They are tested apart.
+// The verified mapping (docs/POLICY-COMPILER.md): MODE drives approval (policy +
+// reviewer); judged modes force a :workspace sandbox as the review TRIGGER even when
+// Claude isn't sandboxing; the sandbox config refines the workspace tables.
+function isGranular(p: unknown): boolean {
+  return typeof p === "object" && p !== null && "granular" in p;
+}
+
 describe("mirror — mode → approvalPolicy (the approval axis)", () => {
   test("plan → untrusted", () => {
     expect(mirror(settings(), "plan").approvalPolicy).toBe("untrusted");
   });
+  // Judged modes use `granular`, which raises a sandbox escape for review.
   for (const mode of ["default", "manual", "acceptEdits", "auto"] as const) {
-    test(`${mode} → on-request`, () => {
-      expect(mirror(settings(), mode).approvalPolicy).toBe("on-request");
+    test(`${mode} → granular`, () => {
+      expect(isGranular(mirror(settings(), mode).approvalPolicy)).toBe(true);
     });
   }
   for (const mode of ["dontAsk", "bypassPermissions"] as const) {
@@ -49,39 +55,42 @@ describe("mirror — mode → approvalPolicy (the approval axis)", () => {
   }
 });
 
-describe("mirror — sandbox config → scope (the sandbox axis, NOT the mode)", () => {
-  test("plan → :read-only profile, regardless of sandbox (read-only intent)", () => {
-    expect(mirror(settings(), "plan").profile!.base).toBe(":read-only");
-    expect(mirror(settings({ sandboxEnabled: true }), "plan").profile!.base).toBe(":read-only");
+describe("mirror — mode → approvalsReviewer (human vs model)", () => {
+  test("auto → auto_review (Codex's model judges escapes)", () => {
+    expect(mirror(settings(), "auto").approvalsReviewer).toBe("auto_review");
   });
-
-  // Sandbox OFF + non-plan → no profile → danger-full-access. Claude imposes no OS
-  // sandbox on its bash, so neither do we — for EVERY non-plan mode, ask or not.
-  for (const mode of ["default", "manual", "acceptEdits", "auto", "dontAsk", "bypassPermissions"] as const) {
-    test(`${mode} + sandbox off → no profile (danger-full-access)`, () => {
-      expect(mirror(settings(), mode).profile).toBeUndefined();
+  for (const mode of ["default", "manual", "acceptEdits"] as const) {
+    test(`${mode} → user (escapes routed to the human elicitation)`, () => {
+      expect(mirror(settings(), mode).approvalsReviewer).toBe("user");
     });
   }
-
-  // Sandbox ON + non-plan → :workspace, independent of the approval mode — so even
-  // bypassPermissions under an active sandbox is confined (never-ask, but scoped).
-  for (const mode of ["default", "acceptEdits", "auto", "bypassPermissions"] as const) {
-    test(`${mode} + sandbox on → :workspace profile`, () => {
-      expect(mirror(settings({ sandboxEnabled: true }), mode).profile!.base).toBe(":workspace");
+  for (const mode of ["plan", "dontAsk", "bypassPermissions"] as const) {
+    test(`${mode} → no reviewer`, () => {
+      expect(mirror(settings(), mode).approvalsReviewer).toBeUndefined();
     });
   }
 });
 
-describe("mirror — approvalsReviewer (who adjudicates escalations)", () => {
-  test("auto → auto_review (Codex's model classifies, mirroring Claude's auto)", () => {
-    expect(mirror(settings(), "auto").approvalsReviewer).toBe("auto_review");
+describe("mirror — mode → scope (judged modes force :workspace as the review trigger)", () => {
+  test("plan → :read-only, regardless of sandbox", () => {
+    expect(mirror(settings(), "plan").profile!.base).toBe(":read-only");
+    expect(mirror(settings({ sandboxEnabled: true }), "plan").profile!.base).toBe(":read-only");
   });
 
-  // Every other mode leaves the reviewer at Codex's default (user / human seam):
-  // asking modes prompt the human, never-ask modes make a reviewer moot.
-  for (const mode of ["plan", "default", "manual", "acceptEdits", "dontAsk", "bypassPermissions"] as const) {
-    test(`${mode} → no reviewer (defaults to user)`, () => {
-      expect(mirror(settings(), mode).approvalsReviewer).toBeUndefined();
+  // Judged modes → :workspace even when Claude isn't sandboxing — the sandbox is the
+  // review trigger; the reviewer (user/auto_review) then grants the escapes.
+  for (const mode of ["default", "manual", "acceptEdits", "auto"] as const) {
+    test(`${mode} → :workspace (sandbox on OR off)`, () => {
+      expect(mirror(settings(), mode).profile!.base).toBe(":workspace");
+      expect(mirror(settings({ sandboxEnabled: true }), mode).profile!.base).toBe(":workspace");
+    });
+  }
+
+  // Never-ask modes → no profile → danger-full-access, regardless of sandbox.
+  for (const mode of ["dontAsk", "bypassPermissions"] as const) {
+    test(`${mode} → no profile (danger-full-access)`, () => {
+      expect(mirror(settings(), mode).profile).toBeUndefined();
+      expect(mirror(settings({ sandboxEnabled: true }), mode).profile).toBeUndefined();
     });
   }
 });
@@ -89,8 +98,8 @@ describe("mirror — approvalsReviewer (who adjudicates escalations)", () => {
 describe("mirror — network posture → profile.network.enabled", () => {
   const enabled = (s: Partial<EffectiveSettings>) => mirror(settings(s), "default").profile!.network!.enabled;
 
-  test("no Claude sandbox → no profile (danger-full-access; network open by nature)", () => {
-    expect(mirror(settings(), "default").profile).toBeUndefined();
+  test("no Claude sandbox → network ON (mirrors Claude's own full network)", () => {
+    expect(enabled({})).toBe(true);
   });
   test("under Claude's sandbox, no allowlist → network denied", () => {
     expect(enabled({ sandboxEnabled: true })).toBe(false);
@@ -131,15 +140,16 @@ describe("mirror — allow rules → execpolicy amendments", () => {
 });
 
 describe("mirror — profiles (the unified scope + network axis)", () => {
-  test("scope derives from sandbox: plan→read-only, sandbox-on→workspace, sandbox-off→none", () => {
+  test("scope: plan→read-only, judged→workspace (even unsandboxed), never-ask→none", () => {
     expect(profileFor(settings(), "plan")!.base).toBe(":read-only");
-    expect(profileFor(settings({ sandboxEnabled: true }), "default")!.base).toBe(":workspace");
-    expect(profileFor(settings(), "default")).toBeUndefined(); // sandbox off → danger
+    expect(profileFor(settings(), "default")!.base).toBe(":workspace"); // sandbox off, still workspace
+    expect(profileFor(settings({ sandboxEnabled: true }), "auto")!.base).toBe(":workspace");
+    expect(profileFor(settings(), "bypassPermissions")).toBeUndefined(); // never-ask → danger
   });
 
   test("profile id is derived from the base scope", () => {
     expect(profileFor(settings(), "plan")!.id).toBe("dragoman-read-only");
-    expect(profileFor(settings({ sandboxEnabled: true }), "default")!.id).toBe("dragoman-workspace");
+    expect(profileFor(settings(), "default")!.id).toBe("dragoman-workspace");
   });
 
   test("network mirrors Claude: enabled when unsandboxed, domains from allow/deny + WebFetch", () => {
@@ -147,8 +157,8 @@ describe("mirror — profiles (the unified scope + network axis)", () => {
     expect(p!.network).toEqual({ enabled: true, domains: [["a.com", "allow"], ["c.com", "allow"], ["b.com", "deny"]] });
   });
 
-  test("no sandbox → no profile (danger-full-access; network is open by nature)", () => {
-    expect(profileFor(settings(), "default")).toBeUndefined();
+  test("never-ask mode → no profile (danger-full-access; network open by nature)", () => {
+    expect(profileFor(settings(), "dontAsk")).toBeUndefined();
   });
 
   test("allProfiles yields one profile per extendable base, sharing the network rules", () => {

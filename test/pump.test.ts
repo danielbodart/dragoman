@@ -95,15 +95,15 @@ describe("codex_run / codex_status", () => {
     const { conn, runs } = bridge();
     await runs.start("do the thing", "/repo");
     const start = conn.requests.find((r) => r.method === "thread/start");
-    // Empty settings + no posture → mode "default"; sandbox OFF → danger-full-access
-    // (no profile), on-request approval. Claude isn't sandboxing its bash, so neither
-    // do we — the scope axis is derived from the sandbox config, not the mode.
-    expect(start?.params).toMatchObject({
-      cwd: "/repo",
-      approvalPolicy: "on-request",
-      sandbox: "danger-full-access",
-    });
-    expect((start?.params as { permissions?: unknown }).permissions).toBeUndefined();
+    // Empty settings + no posture → mode "default" (a JUDGED mode) → :workspace
+    // profile as the review trigger + granular approval + reviewer "user" (escapes
+    // routed to the human). Sandbox enum is NOT sent (that's the danger path only).
+    const params = start?.params as { cwd?: string; approvalPolicy?: unknown; approvalsReviewer?: unknown; permissions?: string; sandbox?: unknown };
+    expect(params.cwd).toBe("/repo");
+    expect(typeof params.approvalPolicy === "object" && params.approvalPolicy !== null && "granular" in params.approvalPolicy).toBe(true);
+    expect(params.approvalsReviewer).toBe("user");
+    expect(params.permissions).toBe("dragoman-workspace");
+    expect(params.sandbox).toBeUndefined();
   });
 
   test("an explicit posture overrides the static default", async () => {
