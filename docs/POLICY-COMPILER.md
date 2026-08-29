@@ -114,22 +114,24 @@ become a *fence* that restricts Codex to only those hosts.
 | Claude mode | sandbox off → `sandboxPolicy` | sandbox on → `sandboxPolicy` | `approvalPolicy` | reviewer |
 |---|---|---|---|---|
 | `plan` | `readOnly` | `readOnly` | untrusted (moot) | user |
-| `default`/ask | `dangerFullAccess`? | `workspaceWrite` + tables | untrusted | user |
-| `acceptEdits` | `dangerFullAccess`? | `workspaceWrite` + tables | on-request / granular | user |
-| `auto` | `dangerFullAccess`? | `workspaceWrite` + tables | on-request | **`auto_review`** |
+| `default`/ask | `dangerFullAccess` ✓ | `workspaceWrite` + tables | on-request | user |
+| `acceptEdits` | `dangerFullAccess` ✓ | `workspaceWrite` + tables | on-request / granular | user |
+| `auto` | `dangerFullAccess` ✓ | `workspaceWrite` + tables | on-request | **`auto_review`** |
 | `bypass`/`dontAsk` | `dangerFullAccess` | `dangerFullAccess` | never | — |
+
+Scope derivation (`baseFor` → sandbox-derived) is **implemented and live-verified**:
+an `auto` run under no Claude sandbox now reaches the network and writes outside the
+cwd, matching Claude. Confirmed too that under `dangerFullAccess` an asking
+`approvalPolicy` is **moot** — no confinement means nothing to escalate, so Codex
+just runs (as Claude's `auto` does once its classifier allows). So the sandbox-off
+column is settled: `dangerFullAccess`, full access, prompting only via the
+sandboxed column.
 
 `auto` uses **`auto_review`** (locked): Codex's model classifies escalations — the
 closest available analog to Claude's auto classifier, since routing to Claude's own
-model isn't possible (no MCP sampling). Lean into the reviewer classifying rather
-than gating the human. The exact `approvalPolicy` paired with it (on-request vs a
-`granular` shape) is to be mapped and verified.
-
-**The `?` cells are the open verification:** does Codex honour an *asking*
-`approvalPolicy` (untrusted / on-request) together with `sandboxPolicy =
-dangerFullAccess`? If `dangerFullAccess` forces never-ask, then `sandbox-off + ask`
-must instead be `workspaceWrite` with broad writable roots, to keep prompting
-alive. Pin this with the live ratchet before locking those cells — never guess it.
+model isn't possible (no MCP sampling). It only bites in the **sandboxed** column,
+where escapes exist to adjudicate — and even there it needs escalations to be
+*raised* first (the `granular` policy; see Open).
 
 ## Stage 3 — Provision (IO: disk + process)
 
@@ -211,14 +213,12 @@ Codex honours the emitted config.
 
 ## Open
 
-- **`dangerFullAccess` × asking approval** — the matrix `?` cells: does Codex still
-  prompt under an asking `approvalPolicy` when the sandbox is `dangerFullAccess`?
-  If not, `sandbox-off + ask` becomes `workspaceWrite` with broad roots. Pin with
-  the live ratchet.
-- **`auto` approvalPolicy** — `auto_review` is locked as the reviewer; the exact
-  `approvalPolicy` (on-request vs a `granular` shape) paired with it is to be
-  mapped and verified for the best classification behaviour.
+- **Escalation-raising in the sandboxed column** — `on-request` does NOT turn a
+  sandbox denial into an approval event (live-observed: a sandboxed `auto` run just
+  hard-failed network/write, "no escalation requested"), so `auto_review` never
+  sees anything. Map the `granular` policy (`sandbox_approval`, `request_permissions`)
+  so escapes are raised, then adjudicated by `auto_review`. Verify with the ratchet.
 - **WebFetch cross-channel mapping** — decide and verify how a Claude WebFetch tool
   permission translates to Codex's sandboxed-exec network (allow, never fence).
-- **`CodexPolicy` type** — the exact in-memory shape (config-file model + per-turn
-  params) the two stages hand across.
+- **`CodexPolicy` type + compile/provision split** — the pure in-memory shape and
+  the per-run-spawn provision seam (kills `PROFILE_BASES`/`allProfiles`).
