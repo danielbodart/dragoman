@@ -1,4 +1,4 @@
-![Logo](docs/logo.png)
+<p align="center"><img src="docs/logo.png" alt="Logo" width="600"></p>
 
 # Dragoman
 
