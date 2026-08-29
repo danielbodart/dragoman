@@ -295,12 +295,15 @@ describe("the approval bridge — the anti-hang property", () => {
     expect(elicitation.asks).toEqual([]);
   });
 
-  test("acceptEdits: a file edit is auto-accepted without asking the human", async () => {
+  test("acceptEdits: an ESCAPED file edit still asks the human (in-scope edits auto-run via the sandbox)", async () => {
     const s = (): EffectiveSettings => ({ ...emptySettings(), defaultMode: "acceptEdits" });
     const { conn, elicitation, runs, threadId } = bridge("t1", s);
     await runs.start("go", "/repo");
-    expect(await conn.emitServerRequest(fileChangeReq(threadId))).toEqual({ decision: "accept" });
-    expect(elicitation.asks).toEqual([]);
+    const reply = conn.emitServerRequest(fileChangeReq(threadId));
+    await Bun.sleep(1);
+    expect(elicitation.waiting).toBe(true); // routed to the human, not auto-accepted
+    elicitation.answer("decline");
+    expect(await reply).toEqual({ decision: "decline" });
   });
 
   test("currentTime/read is answered with the real time, not an approval decision", async () => {

@@ -201,11 +201,11 @@ const SAFE_DEFAULT: ClaudeMode = "default";
 export function mirror(settings: EffectiveSettings, mode: ClaudeMode): CodexPolicy {
   const approvalPolicy = approvalFor(mode);
   const approvalsReviewer = reviewerFor(mode);
-  // acceptEdits auto-approves file edits AND a fixed set of filesystem commands
-  // in-scope; we prepend those as execpolicy allows so they skip the prompt, on
-  // top of the user's own `allow` Bash rules.
-  const fromRules = bashPrefixes(settings.allow);
-  const execpolicyAmendments = mode === "acceptEdits" ? [...ACCEPT_EDITS_FS_COMMANDS, ...fromRules] : fromRules;
+  // execpolicy allow-prefixes come from the user's `allow` Bash rules only. We do
+  // NOT add acceptEdits's fs commands here: in-scope edits/commands already auto-run
+  // via the `:workspace` sandbox, so a fs-command *approval* only ever fires for an
+  // ESCAPE (out-of-scope) — auto-accepting that would grant what Claude prompts for.
+  const execpolicyAmendments = bashPrefixes(settings.allow);
   const denyPrefixes = bashPrefixes(settings.deny);
   const profile = profileFor(settings, mode);
   return {
@@ -219,24 +219,21 @@ export function mirror(settings: EffectiveSettings, mode: ClaudeMode): CodexPoli
   };
 }
 
-/**
- * acceptEdits auto-approves these filesystem Bash commands in-scope, alongside
- * file edits (Claude's own list). The `:workspace` sandbox already confines them
- * to the writable roots, so auto-accepting them here matches Claude without
- * widening reach.
- */
-const ACCEPT_EDITS_FS_COMMANDS: string[][] = [
-  ["mkdir"], ["touch"], ["rm"], ["rmdir"], ["mv"], ["cp"], ["sed"],
-];
-
 /** Unmatched command approval: `dontAsk` refuses without asking; others ask the human. */
 function commandFallbackFor(mode: ClaudeMode): "elicit" | "decline" {
   return mode === "dontAsk" ? "decline" : "elicit";
 }
 
-/** File-edit approval: acceptEdits auto-accepts; dontAsk refuses; others ask the human. */
+/**
+ * File-edit approval. `dontAsk` refuses; everyone else asks the human.
+ *
+ * acceptEdits is NOT auto-accept: its in-scope edits already auto-run via the
+ * `:workspace` sandbox without an approval, so a fileChange approval only ever
+ * fires for an ESCAPE (a write outside the writable roots) — which Claude prompts
+ * for. Auto-accepting that would grant an out-of-scope write; so acceptEdits, like
+ * Manual, routes escaped edits to the human.
+ */
 function fileChangeFor(mode: ClaudeMode): "elicit" | "accept" | "decline" {
-  if (mode === "acceptEdits") return "accept";
   if (mode === "dontAsk") return "decline";
   return "elicit";
 }

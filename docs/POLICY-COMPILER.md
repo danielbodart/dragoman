@@ -262,7 +262,7 @@ command → `elicit`/`decline`) and `fileChange` (edit → `elicit`/`accept`/`de
 |---|---|---|---|---|---|---|
 | `plan` | `readOnly` | untrusted | user | elicit | elicit | read-only exploration; writes blocked/escalate |
 | `default`/`manual` | `readOnly` | untrusted | user | elicit | elicit | reads auto; **writes/edits escalate → human** (Manual "ask before edits") |
-| `acceptEdits` | `workspaceWrite` | untrusted | user | elicit | **accept** | edits + fs cmds (`mkdir`/`touch`/`rm`/`rmdir`/`mv`/`cp`/`sed`) auto; other bash/escapes → human |
+| `acceptEdits` | `workspaceWrite` | untrusted | user | elicit | elicit | in-scope edits auto (via sandbox); **escaped** edits/commands → human (not auto-accepted) |
 | `auto` | `workspaceWrite` | `granular` | **`auto_review`** | elicit | elicit | escapes → model-judged ✅ **verified** |
 | `dontAsk` | `readOnly` | untrusted | — | **decline** | **decline** | only pre-approved (allow rules) + reads run; writes/unmatched refused, never asks |
 | `bypassPermissions` | `dangerFullAccess` | never | — | — | — | everything, unconfined, no check |

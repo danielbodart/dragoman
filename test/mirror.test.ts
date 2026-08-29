@@ -81,13 +81,16 @@ describe("mirror — mode → fallback knobs (commandFallback / fileChange)", ()
     expect(p.commandFallback).toBe("decline");
     expect(p.fileChange).toBe("decline");
   });
-  test("acceptEdits auto-accepts file edits + auto-approves fs commands, asks other bash", () => {
+  // acceptEdits does NOT auto-accept escaped edits or inject fs-command allows:
+  // in-scope edits already auto-run via the sandbox, so those paths only ever grant
+  // escapes (which Claude prompts for). It elicits like Manual; the scope differs.
+  test("acceptEdits does not auto-accept escapes (elicit) and adds no fs-command allows", () => {
     const p = mirror(settings(), "acceptEdits");
-    expect(p.fileChange).toBe("accept");
+    expect(p.fileChange).toBe("elicit");
     expect(p.commandFallback).toBe("elicit");
-    expect(p.execpolicyAmendments).toEqual(expect.arrayContaining([["mkdir"], ["rm"], ["sed"]]));
+    expect(p.execpolicyAmendments).toEqual([]); // no ambient fs prefixes; only user allow rules
   });
-  for (const mode of ["default", "manual", "plan", "auto"] as const) {
+  for (const mode of ["default", "manual", "plan", "auto", "acceptEdits"] as const) {
     test(`${mode} → elicit command fallback, elicit file edits`, () => {
       const p = mirror(settings(), mode);
       expect(p.commandFallback).toBe("elicit");
