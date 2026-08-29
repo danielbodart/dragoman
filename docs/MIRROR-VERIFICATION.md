@@ -67,6 +67,43 @@ decision). That harness is deferred to avoid burning model tokens on every run.
 
 ---
 
+## Approval notifications (observed on the wire)
+
+The method names and payload types live in the generated protocol
+(`ServerNotification.ts`; `ItemGuardianApprovalReview{Started,Completed}Notification`,
+`GuardianWarningNotification`, `GuardianApprovalReview`, `AutoReviewDecisionSource`),
+but those are marked `[UNSTABLE] … expected to change` and document only the schema,
+not *when* each fires or with what values. Recorded here from the live
+`autoreview.experiment.ts` probes (codex-cli 0.150.1):
+
+- **`item/autoApprovalReview/started` → `item/autoApprovalReview/completed`** — the
+  internal classifier ran. **Only fires under `approvalPolicy: granular`** (with
+  `sandbox_approval`/`request_permissions` on); `on-request` never raised it. The
+  `completed` payload (type `ItemGuardianApprovalReviewCompletedNotification`):
+  ```json
+  { "threadId": "...", "turnId": "...", "reviewId": "...", "targetItemId": "exec-...",
+    "decisionSource": "agent",
+    "review": { "status": "approved", "riskLevel": "medium", "userAuthorization": "high",
+                "rationale": "The user explicitly authorized deleting exactly these ten local files; the scope is bounded, though deletion is potentially irreversible." },
+    "action": { "type": "command", ... } }
+  ```
+  `decisionSource` only ever observed as `"agent"` (the enum's only value at 0.150.1);
+  `status` ∈ approved/denied/timedOut/aborted; `action.type` ∈ command/execve/applyPatch/**networkAccess**/mcpToolCall/requestPermissions.
+- **`guardianWarning`** (`GuardianWarningNotification`) — accompanies a completed
+  review; a human-readable summary, e.g. `"Automatic approval review approved (risk:
+  low, authorization: high): The user explicitly authorized exactly one narrowly
+  scoped empty-file creation …"`.
+- **`item/commandExecution/requestApproval`** — the escape routed to the CLIENT (our
+  elicitation) instead of the internal review. Fires under **`approvalsReviewer:
+  "user"` (explicit)**; NOT when the reviewer is unset (headless defaults to the
+  internal agent review) or `auto_review`.
+
+Trigger summary: a **sandbox** is required for any review at all (no wall → nothing
+to escalate); `granular` engages the internal `autoApprovalReview`; explicit
+`approvalsReviewer: "user"` diverts the escape to the client; `guardian_subagent`
+was indistinguishable from `auto_review` at 0.150.1. See
+[`POLICY-COMPILER.md` → Approval mechanics](POLICY-COMPILER.md).
+
 ## Implemented mappings
 
 ### A. Permission mode → approvalPolicy + sandbox (`mirror.ts` `approvalFor`/`sandboxModeFor`)
