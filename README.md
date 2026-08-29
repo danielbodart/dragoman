@@ -1,42 +1,37 @@
-<p align="center">
-  <img src="docs/logo.png" alt="Dragoman" width="360">
-</p>
+<p align="center"><img src="docs/logo.png" alt="Logo" width="600"></p>
 
-<h1 align="center">Dragoman</h1>
+# Dragoman
 
-<p align="center">
-  <em>The interpreter between two courts.</em><br>
-  A local bridge that makes OpenAI <strong>Codex</strong> a native-feeling subagent inside Anthropic's <strong>Claude Code</strong>.
-</p>
+A Claude Code plugin that translates between Claude and Codex so that Codex feels native. 
+Dragoman translates between them — so Codex's approvals, progress, and permissions feel 
+like they were built into Claude all along.
 
----
+> A _dragoman_ was the **interpreter-diplomat** who let two courts speaking **different
+languages** do business. That is exactly this tool's job.
 
-A _dragoman_ was the interpreter-diplomat who let two courts speaking different
-languages do business. That is this tool's job: Claude Code and the Codex
-app-server speak different protocols, and Dragoman translates between them — so
-Codex's approvals, progress, and permissions feel like they were built into Claude
-all along.
 
 ## Why
 
 The official Codex plugin drives Codex well but interfaces with Claude like a batch
-job:
+job. A few things make it feel primitive:
 
 - **Approvals don't work.** When Codex asks "may I run this command?", the plugin
-  rejects the request, so it hangs — unless you disable the sandbox entirely.
+  rejects the request outright, so it hangs — unless you disable the sandbox
+  entirely (`danger-full-access`).
 - **Progress is invisible.** Claude sees one final blob, not what Codex is doing.
-- **Permissions and mode aren't mapped** — let alone fine-grained sandbox rules.
+- **Permissions and Mode** are not mapped, let alone fine grained sandbox rules
 
-Dragoman fixes all three by talking to the Codex **app-server** — the supported,
-actively-developed interface — and mapping its approval, mode, permission and
-progress flows onto Claude Code's own native mechanisms.
+Dragoman fixes both by talking to the Codex **app-server** — the one supported,
+actively-developed interface — and mapping its
+approval, mode, permissions and progress flows onto Claude Code's own native mechanisms.
 
-## Mirror Claude, don't reinvent it
+## The idea in one line
 
-Dragoman reads Claude Code's own settings and mirrors them onto Codex per run, so
-Codex inherits Claude's posture with **no config of its own**. It only asks you a
-question when Claude's policy can't answer — and when it does, it uses Claude's
-native approval prompt.
+**Mirror Claude, don't reinvent it.** Dragoman reads Claude Code's own settings and mirrors
+them onto Codex per turn. It only asks you a question when Claude's own policy can't answer — and when it
+does, it uses Claude's native approval prompt.
+
+## What's mapped
 
 | Claude Code | → Codex | Status |
 |---|---|---|
