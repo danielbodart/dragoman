@@ -40,6 +40,8 @@ export type RunStatus = "starting" | "running" | "waiting-approval" | "done" | "
  */
 export interface RunRecord {
   readonly handle: RunHandle;
+  /** Command token prefixes Claude would allow without prompting. */
+  readonly execpolicyAmendments?: readonly (readonly string[])[];
   status: RunStatus;
   latestBeat?: Beat;
   /** The final assistant message / turn result, once `status` is "done". */

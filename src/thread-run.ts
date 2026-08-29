@@ -81,7 +81,11 @@ export class ThreadRuns {
     const thread = (await conn.request("thread/start", params)) as ThreadStartResponse;
     const handle = thread.thread.id;
 
-    this.runs.set(handle, { handle, status: "starting" });
+    this.runs.set(handle, {
+      handle,
+      status: "starting",
+      execpolicyAmendments: policy.execpolicyAmendments,
+    });
 
     // Kick the turn off; do NOT await its completion. The pump drives it from
     // here via the notification stream. A failure to even start the turn is

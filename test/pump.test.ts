@@ -15,18 +15,22 @@ const emptySettings = (): EffectiveSettings => ({
 });
 
 /** Wire a bridge over fakes with a canned thread/start + turn/start, ready to drive. */
-function bridge(threadId = "t1") {
+function bridge(threadId = "t1", settings: () => EffectiveSettings = emptySettings) {
   const conn = new FakeAppServer();
   const elicitation = new FakeElicitationChannel();
   conn.results["thread/start"] = [{ thread: { id: threadId } }];
   conn.results["turn/start"] = [{ turn: { id: "turn1" } }];
   // Match production wiring: ThreadRuns connects lazily via the thunk and the
   // pump is attached on connect. The fake is returned immediately.
-  const runs = new ThreadRuns(async () => conn, (c) => startPump(c, runs, elicitation), () => 1000, emptySettings);
+  const runs = new ThreadRuns(async () => conn, (c) => startPump(c, runs, elicitation), () => 1000, settings);
   return { conn, elicitation, runs, threadId };
 }
 
-function requestApproval(threadId: string, command: string): ServerRequest {
+function requestApproval(
+  threadId: string,
+  command: string,
+  proposedExecpolicyAmendment?: string[],
+): ServerRequest {
   return {
     method: "item/commandExecution/requestApproval",
     id: 1,
@@ -38,6 +42,7 @@ function requestApproval(threadId: string, command: string): ServerRequest {
       startedAtMs: 1000,
       environmentId: null,
       command,
+      proposedExecpolicyAmendment,
       availableDecisions: ["accept", "acceptForSession", "decline"],
     },
   };
@@ -113,6 +118,59 @@ describe("codex_run / codex_status", () => {
 });
 
 describe("the approval bridge — the anti-hang property", () => {
+  test("a mirrored allow-prefix auto-accepts wrapped matching commands without asking the human", async () => {
+    const settings = (): EffectiveSettings => ({ ...emptySettings(), allow: ["Bash(npm run test:*)"] });
+    const { conn, elicitation, runs, threadId } = bridge("t1", settings);
+    await runs.start("run the tests", "/repo");
+
+    expect(await conn.emitServerRequest(requestApproval(threadId, "bash -lc 'npm run test unit'"))).toEqual({
+      decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["npm", "run", "test"] } },
+    });
+    expect(elicitation.asks).toEqual([]);
+
+    const replyPromise = conn.emitServerRequest(requestApproval(threadId, "bash -lc 'npm run lint'"));
+    await Bun.sleep(1);
+    expect(elicitation.waiting).toBe(true);
+    elicitation.answer("decline");
+    expect(await replyPromise).toEqual({ decision: "decline" });
+  });
+
+  test("auto-accept unwraps supported shell forms and preserves bare commands", async () => {
+    const settings = (): EffectiveSettings => ({ ...emptySettings(), allow: ["Bash(npm run test:*)"] });
+    const { conn, elicitation, runs, threadId } = bridge("t1", settings);
+    await runs.start("run the tests", "/repo");
+
+    for (const command of ["/bin/bash -lc 'npm run test unit'", "sh -c 'npm run test unit'", "npm run test unit"]) {
+      expect(await conn.emitServerRequest(requestApproval(threadId, command))).toEqual({
+        decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["npm", "run", "test"] } },
+      });
+    }
+    expect(elicitation.asks).toEqual([]);
+  });
+
+  test("auto-accept prefers Codex's proposed execpolicy amendment", async () => {
+    const settings = (): EffectiveSettings => ({ ...emptySettings(), allow: ["Bash(npm run test:*)"] });
+    const { conn, elicitation, runs, threadId } = bridge("t1", settings);
+    await runs.start("run the tests", "/repo");
+
+    expect(await conn.emitServerRequest(requestApproval(threadId, "unparseable wrapper", ["npm", "run", "test", "unit"]))).toEqual({
+      decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["npm", "run", "test"] } },
+    });
+    expect(elicitation.asks).toEqual([]);
+  });
+
+  test("shell operators limit matching to the first wrapped script segment", async () => {
+    const settings = (): EffectiveSettings => ({ ...emptySettings(), allow: ["Bash(rm:*)"] });
+    const { conn, elicitation, runs, threadId } = bridge("t1", settings);
+    await runs.start("clean up", "/repo");
+
+    const replyPromise = conn.emitServerRequest(requestApproval(threadId, "bash -lc 'echo hi && rm -rf x'"));
+    await Bun.sleep(1);
+    expect(elicitation.waiting).toBe(true);
+    elicitation.answer("decline");
+    expect(await replyPromise).toEqual({ decision: "decline" });
+  });
+
   test("an approval fires an elicitation, and status keeps answering while it waits", async () => {
     const { conn, elicitation, runs, threadId } = bridge();
     await runs.start("delete build", "/repo");

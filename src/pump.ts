@@ -51,8 +51,9 @@ export function startPump(
  * approval methods don't even have a `"decline"` variant. So we dispatch:
  *
  *  - command / file-change approvals → a correctly-typed `{decision}` reply
- *    (command routes through the human via elicitation; file-change declines for
- *    now, which is `FileChangeApprovalDecision`'s valid "no").
+ *    (a mirrored command allow-prefix answers automatically; other commands
+ *    route through the human; file-change declines for now, which is
+ *    `FileChangeApprovalDecision`'s valid "no").
  *  - `currentTime/read` → the real time; it's a host service, not an approval,
  *    trivial and safe to answer correctly.
  *  - everything else (permissions, tool-call/user-input, mcp elicitation
@@ -81,13 +82,19 @@ async function handleServerRequest(
   }
 }
 
-/** Command-execution approval: route it through the human and return the decision. */
+/** Command-execution approval: mirror allow-prefixes, then route the rest through the human. */
 async function handleCommandApproval(
   params: CommandExecutionRequestApprovalParams,
   runs: ThreadRuns,
   elicitation: ElicitationChannel,
 ): Promise<unknown> {
   const run = runs.record(params.threadId);
+  const amendment = matchesPrefix(params, run?.execpolicyAmendments ?? []);
+  if (amendment) {
+    if (run?.status === "waiting-approval") run.status = "running";
+    return { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: amendment } } };
+  }
+
   if (run) run.status = "waiting-approval";
 
   const decisions = availableDecisions(params);
@@ -99,6 +106,57 @@ async function handleCommandApproval(
   if (run && run.status === "waiting-approval") run.status = "running";
 
   return { decision };
+}
+
+/** Return the matching non-empty command-token prefix, if any. */
+function matchesPrefix(
+  params: CommandExecutionRequestApprovalParams,
+  prefixes: readonly (readonly string[])[],
+): readonly string[] | undefined {
+  for (const tokens of commandTokenCandidates(params)) {
+    for (const prefix of prefixes) {
+      if (isTokenPrefix(prefix, tokens)) return prefix;
+    }
+  }
+  return undefined;
+}
+
+/** Candidate command tokens, ordered from Codex's normalized form to raw fallback. */
+function commandTokenCandidates(params: CommandExecutionRequestApprovalParams): readonly (readonly string[])[] {
+  const candidates: (readonly string[])[] = [];
+  if (params.proposedExecpolicyAmendment) candidates.push(params.proposedExecpolicyAmendment);
+
+  const command = params.command?.trim();
+  if (!command) return candidates;
+
+  const script = unwrapShellScript(command);
+  if (script) candidates.push(tokensBeforeShellOperator(script));
+  candidates.push(command.split(/\s+/));
+  return candidates;
+}
+
+/** True when `tokens` starts with every non-empty `prefix` token in order. */
+function isTokenPrefix(prefix: readonly string[], tokens: readonly string[]): boolean {
+  return prefix.length > 0 && prefix.every((token, index) => tokens[index] === token);
+}
+
+/** Extract the script argument from the common non-interactive shell wrappers. */
+function unwrapShellScript(command: string): string | undefined {
+  const match = command.match(/^(?:sh|bash|\/bin\/sh|\/bin\/bash)\s+(?:-c|-lc|-l\s+-c)\s+(.+)$/);
+  if (!match) return undefined;
+
+  const argument = match[1]!.trim();
+  const quote = argument[0];
+  if (quote === "'" || quote === '"') {
+    return argument.length >= 2 && argument.at(-1) === quote ? argument.slice(1, -1) : undefined;
+  }
+  return /^\S+$/.test(argument) ? argument : undefined;
+}
+
+/** Tokenize only the first shell segment, so later chained commands cannot match. */
+function tokensBeforeShellOperator(script: string): readonly string[] {
+  const firstSegment = script.split(/&&|\|\||;|\||&|\n/, 1)[0]!.trim();
+  return firstSegment ? firstSegment.split(/\s+/) : [];
 }
 
 /** The human-facing prompt for a command approval. */
