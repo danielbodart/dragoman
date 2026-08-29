@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { allProfiles, mirror, profileFor, resolveMode } from "../src/mirror.ts";
+import { allProfiles, filesystemFor, mirror, profileFor, resolveMode } from "../src/mirror.ts";
 import type { EffectiveSettings } from "../src/settings.ts";
 
 /** Effective settings with sensible empty defaults, overridable field by field. */
@@ -138,6 +138,54 @@ describe("mirror — profiles (the unified scope + network axis)", () => {
     expect(ps.map((p) => p.base)).toEqual([":read-only", ":workspace"]);
     expect(new Set(ps.map((p) => JSON.stringify(p.network))).size).toBe(1); // same network everywhere
     expect(ps[1]!.network!.domains).toEqual([["a.com", "allow"]]);
+  });
+});
+
+describe("filesystemFor — the four lists → filesystem access", () => {
+  test("each list maps to its access level (denyWrite is a read-only DOWNGRADE, not deny)", () => {
+    const fs = filesystemFor(settings({
+      denyRead: ["/a/secret"], denyWrite: ["/a/ro"], allowWrite: ["/b/out"], allowRead: ["/c/in"],
+    }));
+    expect(new Map(fs.paths)).toEqual(new Map([
+      ["/a/secret", "deny"], ["/a/ro", "read"], ["/b/out", "write"], ["/c/in", "read"],
+    ]));
+    expect(fs.workspaceRoots).toEqual([]);
+  });
+
+  test("empty settings → empty axis (no table gets rendered)", () => {
+    const fs = filesystemFor(settings());
+    expect(fs.paths).toEqual([]);
+    expect(fs.workspaceRoots).toEqual([]);
+  });
+
+  test("relative paths and globs anchor under :workspace_roots; absolutes at top level", () => {
+    const fs = filesystemFor(settings({ denyRead: ["**/*.env", ".aws"], allowWrite: ["/abs/dir"] }));
+    expect(fs.paths).toEqual([["/abs/dir", "write"]]);
+    expect(new Map(fs.workspaceRoots)).toEqual(new Map([["**/*.env", "deny"], [".aws", "deny"]]));
+  });
+
+  test("a path in several lists folds by precedence: deny > read(denyWrite) > write > read", () => {
+    // /x is in every list; denyRead must win (most restrictive).
+    const both = filesystemFor(settings({
+      denyRead: ["/x"], denyWrite: ["/x"], allowWrite: ["/x"], allowRead: ["/x"],
+    }));
+    expect(both.paths).toEqual([["/x", "deny"]]);
+    // denyWrite beats allowWrite for the same path (read-only wins over write).
+    const ro = filesystemFor(settings({ denyWrite: ["/y"], allowWrite: ["/y"] }));
+    expect(ro.paths).toEqual([["/y", "read"]]);
+  });
+
+  test("blank entries are dropped, not emitted as empty keys", () => {
+    const fs = filesystemFor(settings({ denyRead: ["  ", ""] }));
+    expect(fs.paths).toEqual([]);
+    expect(fs.workspaceRoots).toEqual([]);
+  });
+
+  test("profileFor carries the filesystem axis; allProfiles shares it across bases", () => {
+    const p = profileFor(settings({ denyRead: ["/s"] }), "default");
+    expect(p!.filesystem!.paths).toEqual([["/s", "deny"]]);
+    const ps = allProfiles(settings({ denyRead: ["/s"] }));
+    expect(new Set(ps.map((x) => JSON.stringify(x.filesystem))).size).toBe(1);
   });
 });
 

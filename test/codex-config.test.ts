@@ -52,6 +52,37 @@ describe("renderManagedBlock", () => {
   });
 });
 
+describe("renderManagedBlock — filesystem axis", () => {
+  const withFs = (fs: ManagedProfile["filesystem"]): ManagedProfile => ({ id: "dragoman-workspace", base: ":workspace", filesystem: fs });
+
+  test("emits the top-level path map and the :workspace_roots sub-table", () => {
+    const block = renderManagedBlock([withFs({
+      paths: [["/a/secret", "deny"], ["/b/out", "write"]],
+      workspaceRoots: [["**/*.env", "deny"], [".", "write"]],
+    })]);
+    expect(block).toContain('[permissions.dragoman-workspace.filesystem]\n"/a/secret" = "deny"\n"/b/out" = "write"');
+    expect(block).toContain('[permissions.dragoman-workspace.filesystem.":workspace_roots"]\n"**/*.env" = "deny"\n"." = "write"');
+  });
+
+  test("glob_scan_max_depth leads the table, before the :workspace_roots header", () => {
+    const block = renderManagedBlock([withFs({ paths: [], workspaceRoots: [["**/*.env", "deny"]], globScanMaxDepth: 3 })]);
+    const depthAt = block.indexOf("glob_scan_max_depth = 3");
+    const subAt = block.indexOf('.filesystem.":workspace_roots"');
+    expect(depthAt).toBeGreaterThan(-1);
+    expect(depthAt).toBeLessThan(subAt); // parent-table key must precede the sub-table header
+  });
+
+  test("an empty axis renders no filesystem table at all", () => {
+    const block = renderManagedBlock([withFs({ paths: [], workspaceRoots: [] })]);
+    expect(block).not.toContain("filesystem");
+  });
+
+  test("a bare glob_scan_max_depth with no rules is still nothing (depth alone is not a rule)", () => {
+    const block = renderManagedBlock([withFs({ paths: [], workspaceRoots: [], globScanMaxDepth: 5 })]);
+    expect(block).not.toContain("filesystem");
+  });
+});
+
 describe("spliceManagedBlock / stripManagedBlock", () => {
   const userConfig = 'approval_policy = "on-request"\napprovals_reviewer = "auto_review"\n';
 

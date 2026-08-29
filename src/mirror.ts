@@ -8,8 +8,9 @@
  * otherwise a safe default. This function just takes whichever mode won and maps
  * it, plus the sandbox/rules, onto Codex's knobs.
  */
+import { isAbsolute } from "node:path";
 import type { EffectiveSettings } from "./settings.ts";
-import type { DomainAction, ManagedProfile } from "./codex-config.ts";
+import type { DomainAction, FsAccess, ManagedProfile, ProfileFilesystem } from "./codex-config.ts";
 import type { AskForApproval } from "../generated/codex-protocol/ts/v2/AskForApproval.ts";
 import type { ExecPolicyAmendment } from "../generated/codex-protocol/ts/ExecPolicyAmendment.ts";
 
@@ -78,11 +79,51 @@ function webFetchDomain(rule: string): string | undefined {
   return match ? match[1]!.trim() : undefined;
 }
 
+/**
+ * Claude's four filesystem lists → the profile's `filesystem` axis.
+ *
+ * Each Claude list maps to one Codex access level by what it MEANS (PLAN §10.4,
+ * [`FILESYSTEM-MAPPING.md`](../docs/FILESYSTEM-MAPPING.md)):
+ *
+ *   denyRead → deny   (no read, no write)
+ *   denyWrite → read  (read-only — Claude's "no write, still readable", NOT deny)
+ *   allowWrite → write
+ *   allowRead → read
+ *
+ * A path may appear in several lists; deny wins and the more-restrictive level
+ * wins (Codex agrees: `deny > write > read`), so we fold per UNIQUE path in that
+ * priority — first assignment wins. Distinct paths are left for Codex to resolve
+ * by narrowest-path. Absolute paths anchor to the top-level table; relative paths
+ * and globs anchor under `:workspace_roots`, so they track the session's real
+ * writable roots and stay portable across the isolated CODEX_HOME.
+ */
+export function filesystemFor(settings: EffectiveSettings): ProfileFilesystem {
+  // Priority order: first to claim a path wins (deny is most restrictive).
+  const chosen = new Map<string, FsAccess>();
+  const claim = (paths: readonly string[], access: FsAccess): void => {
+    for (const path of paths) {
+      const key = path.trim();
+      if (key !== "" && !chosen.has(key)) chosen.set(key, access);
+    }
+  };
+  claim(settings.denyRead, "deny");
+  claim(settings.denyWrite, "read");
+  claim(settings.allowWrite, "write");
+  claim(settings.allowRead, "read");
+
+  const paths: [string, FsAccess][] = [];
+  const workspaceRoots: [string, FsAccess][] = [];
+  for (const [path, access] of chosen) {
+    (isAbsolute(path) ? paths : workspaceRoots).push([path, access]);
+  }
+  return { paths, workspaceRoots };
+}
+
 /** The profile a thread at this posture selects, or undefined for danger (no profile). */
 export function profileFor(settings: EffectiveSettings, mode: ClaudeMode): ManagedProfile | undefined {
   if (mode === "bypassPermissions") return undefined; // danger-full-access: not a profile base
   const base = baseFor(mode);
-  return { id: profileIdForBase(base), base, network: networkFor(settings) };
+  return { id: profileIdForBase(base), base, network: networkFor(settings), filesystem: filesystemFor(settings) };
 }
 
 /**
@@ -92,7 +133,8 @@ export function profileFor(settings: EffectiveSettings, mode: ClaudeMode): Manag
  */
 export function allProfiles(settings: EffectiveSettings): ManagedProfile[] {
   const network = networkFor(settings);
-  return PROFILE_BASES.map((base) => ({ id: profileIdForBase(base), base, network }));
+  const filesystem = filesystemFor(settings);
+  return PROFILE_BASES.map((base) => ({ id: profileIdForBase(base), base, network, filesystem }));
 }
 
 /** The safe default when no mode is known (PLAN §10.2 tier 3): ask, read-only. */

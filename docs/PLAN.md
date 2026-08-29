@@ -44,6 +44,12 @@ permissions onto Claude Code's own mechanisms.
   (fail-closed, catches wrapped/chained/env-prefixed commands).
 - Network mirrors Claude's *real* posture (on unless Claude is actively
   sandboxing; `WebFetch(domain:)` allows merged in).
+- **Fine-grained filesystem** — `sandbox.filesystem.{allow,deny}{Read,Write}` →
+  the profile's `[permissions.<id>.filesystem]` path→access map, the **third profile
+  axis** beside scope + network. `denyRead`→`deny`, `denyWrite`→`read` (downgrade),
+  `allowWrite`→`write`, `allowRead`→`read`; deny wins on overlap; absolute paths
+  anchor top-level, relative/glob under `:workspace_roots`. Verified live: read-deny
+  model-free, write-carve on one real turn ([`FILESYSTEM-MAPPING.md`](FILESYSTEM-MAPPING.md)).
 - **Isolated `CODEX_HOME`** — mirroring is fully contained; the profile is the only
   sandbox path (legacy sandbox enum/policy removed).
 - Sparse heartbeat + long-poll `codex_status`.
@@ -66,10 +72,6 @@ permissions onto Claude Code's own mechanisms.
 
 ## Remaining
 
-- **Fine-grained filesystem mapping** — `sandbox.filesystem.allowRead/denyRead/
-  allowWrite/denyWrite` → profile `file_system` entries. The `file_system` key
-  loads; the read/deny **access** semantics still need working out (writable roots
-  already covered by `runtimeWorkspaceRoots`). Uncommon; deferred.
 - **Model-answered approvals (v2).** Route approvals to Claude's *model* via a
   tool-call channel (`codex_answer`) — the one MCP channel the model participates
   in — instead of only the human. Designed; not built.

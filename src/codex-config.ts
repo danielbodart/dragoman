@@ -30,6 +30,29 @@ export interface ProfileNetwork {
 }
 
 /**
+ * A Codex filesystem access level. `read` is read-only, `write` is read+write,
+ * `deny` blocks both. Codex resolves overlap by narrowest-path-wins with
+ * `deny > write > read` — verified against codex-cli 0.150.1.
+ */
+export type FsAccess = "read" | "write" | "deny";
+
+/**
+ * The filesystem axis of a profile: path → access, mirroring Claude's
+ * `sandbox.filesystem.{allow,deny}{Read,Write}`. Two anchors — absolute paths go
+ * in the top-level `[…filesystem]` table; relative paths and globs go under the
+ * `:workspace_roots` special token (portable across the isolated CODEX_HOME).
+ * The table AUGMENTS the base scope (narrower wins); an empty axis is omitted.
+ */
+export interface ProfileFilesystem {
+  /** Absolute-path entries → top-level `[permissions.<id>.filesystem]`. */
+  readonly paths: readonly (readonly [string, FsAccess])[];
+  /** Root-relative paths + globs → `[permissions.<id>.filesystem.":workspace_roots"]`. */
+  readonly workspaceRoots: readonly (readonly [string, FsAccess])[];
+  /** Bounds `**` glob scans on Linux/WSL/Windows; omitted when absent. */
+  readonly globScanMaxDepth?: number;
+}
+
+/**
  * One Codex permission profile Dragoman manages — the sandbox/isolation axis as a
  * single unit: a built-in base scope plus the network rules. Selected per thread
  * via `thread/start`'s `permissions` field, it replaces the legacy `sandbox` enum
@@ -42,6 +65,8 @@ export interface ManagedProfile {
   readonly base: string;
   /** Network rules; omit to leave the base's default network posture untouched. */
   readonly network?: ProfileNetwork;
+  /** Filesystem rules; omit to leave the base's default filesystem access untouched. */
+  readonly filesystem?: ProfileFilesystem;
 }
 
 /**
@@ -78,14 +103,39 @@ export function renderManagedBlock(profiles: readonly ManagedProfile[]): string 
         }
       }
     }
+    if (profile.filesystem && hasFsRules(profile.filesystem)) {
+      renderFilesystem(lines, profile.id, profile.filesystem);
+    }
   }
   lines.push(END);
   return lines.join("\n");
 }
 
+/**
+ * Emit a profile's `filesystem` axis: the top-level path map, then the
+ * `:workspace_roots` sub-table for root-relative paths + globs. `glob_scan_max_depth`
+ * (when set) leads the top-level table — it must sit under the `[…filesystem]`
+ * header, before the `:workspace_roots` sub-table header opens. Only emitted when
+ * some rule exists (`hasFsRules`), so an empty axis adds no table at all.
+ */
+function renderFilesystem(lines: string[], id: string, fs: ProfileFilesystem): void {
+  lines.push(`[permissions.${id}.filesystem]`);
+  if (fs.globScanMaxDepth !== undefined) lines.push(`glob_scan_max_depth = ${fs.globScanMaxDepth}`);
+  for (const [path, access] of fs.paths) lines.push(`${tomlString(path)} = ${tomlString(access)}`);
+  if (fs.workspaceRoots.length > 0) {
+    lines.push(`[permissions.${id}.filesystem.":workspace_roots"]`);
+    for (const [path, access] of fs.workspaceRoots) lines.push(`${tomlString(path)} = ${tomlString(access)}`);
+  }
+}
+
 /** Whether a profile carries per-host domain rules (which require the proxy). */
 function hasDomains(profile: ManagedProfile): boolean {
   return (profile.network?.domains.length ?? 0) > 0;
+}
+
+/** Whether a filesystem axis carries any actual path rule (a bare depth is not one). */
+function hasFsRules(fs: ProfileFilesystem): boolean {
+  return fs.paths.length > 0 || fs.workspaceRoots.length > 0;
 }
 
 /**
