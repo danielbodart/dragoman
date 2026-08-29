@@ -36,14 +36,14 @@ describe("mirror — mode → approval + sandbox", () => {
     const p = mirror(settings(), "plan", "/repo");
     expect(p.approvalPolicy).toBe("untrusted");
     expect(p.sandbox).toBe("read-only");
-    expect(p.sandboxPolicy).toEqual({ type: "readOnly", networkAccess: false });
+    expect(p.sandboxPolicy).toEqual({ type: "readOnly", networkAccess: true });
   });
 
   test("default → on-request + workspace-write with cwd writable", () => {
     const p = mirror(settings(), "default", "/repo");
     expect(p.approvalPolicy).toBe("on-request");
     expect(p.sandbox).toBe("workspace-write");
-    expect(p.sandboxPolicy).toMatchObject({ type: "workspaceWrite", writableRoots: ["/repo"], networkAccess: false });
+    expect(p.sandboxPolicy).toMatchObject({ type: "workspaceWrite", writableRoots: ["/repo"], networkAccess: true });
   });
 
   test("bypassPermissions → never + danger-full-access", () => {
@@ -68,7 +68,7 @@ describe("mirror — mode → approval + sandbox", () => {
       const p = mirror(settings(), mode, "/repo");
       expect(p.approvalPolicy).toBe("on-request");
       expect(p.sandbox).toBe("workspace-write");
-      expect(p.sandboxPolicy).toMatchObject({ type: "workspaceWrite", writableRoots: ["/repo"], networkAccess: false });
+      expect(p.sandboxPolicy).toMatchObject({ type: "workspaceWrite", writableRoots: ["/repo"], networkAccess: true });
     });
   }
 });
@@ -79,18 +79,25 @@ describe("mirror — sandbox settings → SandboxPolicy", () => {
     expect(p.sandboxPolicy).toMatchObject({ writableRoots: ["/repo", "/data", "/cache"] });
   });
 
-  test("a network allowlist flips networkAccess on", () => {
-    const p = mirror(settings({ allowedDomains: ["api.example.com"] }), "default", "/repo");
+  test("no Claude sandbox → network stays ON, mirroring Claude's own full network", () => {
+    // The common case: the user isn't using Claude's sandbox, so Claude's tools
+    // have full network — denying it to Codex would mirror more restrictively.
+    expect(mirror(settings(), "default", "/repo").sandboxPolicy).toMatchObject({ networkAccess: true });
+  });
+
+  test("under Claude's sandbox, no allowlist → network denied", () => {
+    const p = mirror(settings({ sandboxEnabled: true }), "default", "/repo");
+    expect(p.sandboxPolicy).toMatchObject({ networkAccess: false });
+  });
+
+  test("under Claude's sandbox, an allowlist flips network on", () => {
+    const p = mirror(settings({ sandboxEnabled: true, allowedDomains: ["api.example.com"] }), "default", "/repo");
     expect(p.sandboxPolicy).toMatchObject({ networkAccess: true });
   });
 
-  test("strictAllowlist alone also enables network", () => {
-    const p = mirror(settings({ strictAllowlist: true }), "default", "/repo");
+  test("under Claude's sandbox, strictAllowlist alone also enables network", () => {
+    const p = mirror(settings({ sandboxEnabled: true, strictAllowlist: true }), "default", "/repo");
     expect(p.sandboxPolicy).toMatchObject({ networkAccess: true });
-  });
-
-  test("no network config keeps network denied (Claude's default)", () => {
-    expect(mirror(settings(), "default", "/repo").sandboxPolicy).toMatchObject({ networkAccess: false });
   });
 });
 

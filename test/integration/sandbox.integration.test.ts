@@ -71,20 +71,30 @@ describe("sandbox scope is honoured (mirror → command/exec)", () => {
 describe("network access is honoured (mirror → command/exec)", () => {
   const curl = ["curl", "-sS", "-m", "10", "-o", "/dev/null", "https://example.com"];
 
-  verifyOnce("no allowlist → network is blocked", async () => {
+  verifyOnce("no Claude sandbox → network is ON (mirrors Claude's own network)", async () => {
     await withCodex((conn) =>
       withTempDir(async (cwd) => {
-        const policy = mirror(settings(), "dontAsk", cwd);
+        const policy = mirror(settings(), "dontAsk", cwd); // sandbox not enabled → network open
+        const res = await exec(conn, curl, cwd, policy.sandboxPolicy);
+        expect(res.exitCode).toBe(0);
+      }),
+    );
+  });
+
+  verifyOnce("under Claude's sandbox with no allowlist → network is blocked", async () => {
+    await withCodex((conn) =>
+      withTempDir(async (cwd) => {
+        const policy = mirror(settings({ sandboxEnabled: true }), "dontAsk", cwd);
         const res = await exec(conn, curl, cwd, policy.sandboxPolicy);
         expect(res.exitCode).not.toBe(0);
       }),
     );
   });
 
-  verifyOnce("a non-empty allowlist → network is enabled (coarse bool)", async () => {
+  verifyOnce("under Claude's sandbox, a non-empty allowlist → network is enabled", async () => {
     await withCodex((conn) =>
       withTempDir(async (cwd) => {
-        const policy = mirror(settings({ allowedDomains: ["example.com"] }), "dontAsk", cwd);
+        const policy = mirror(settings({ sandboxEnabled: true, allowedDomains: ["example.com"] }), "dontAsk", cwd);
         const res = await exec(conn, curl, cwd, policy.sandboxPolicy);
         expect(res.exitCode).toBe(0);
       }),

@@ -131,14 +131,18 @@ function sandboxPolicyFor(sandbox: SandboxMode, settings: EffectiveSettings, cwd
 }
 
 /**
- * Whether Codex may reach the network, from Claude's sandbox network block.
+ * Whether Codex may reach the network, mirroring Claude's ACTUAL posture.
  *
- * Claude's default is deny (no allowlist ⇒ no network). A non-empty allowlist,
- * or an explicit strict allowlist, means the user opened network up, so Codex
- * gets `networkAccess: true`. (The specific host allow/deny lists map onto
- * Codex's network policy separately; here we only flip the coarse switch.)
+ * The correction: when Claude is not sandboxing (`sandbox.enabled` unset — the
+ * common case), Claude's own tools run with FULL network, so denying it to Codex
+ * would mirror *more restrictively than Claude* — the one direction we never go.
+ * So network is open unless Claude is actively sandboxing. Only under Claude's
+ * sandbox is network default-deny, with a non-empty (or strict) allowlist opening
+ * it. (Specific host allow/deny lists map onto Codex's network policy separately;
+ * here we only flip the coarse switch.)
  */
 function networkEnabled(settings: EffectiveSettings): boolean {
+  if (!settings.sandboxEnabled) return true;
   return settings.allowedDomains.length > 0 || settings.strictAllowlist === true;
 }
 

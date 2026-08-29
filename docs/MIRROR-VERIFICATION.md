@@ -101,10 +101,18 @@ elicitation bridge is reached only under `plan`/`untrusted`.
 
 | # | Posture / setting | Emitted policy | Probe | Expected observable | Actual | Verdict |
 |---|---|---|---|---|---|---|
-| C1 | `dontAsk`, no network allowlist | networkAccess = false | `curl -sS https://example.com` and report outcome | **fails** (network blocked) | `curl: (6) Could not resolve host: example.com` — network blocked | ✅ |
-| C2 | `dontAsk`, `sandbox.network.allowedDomains: ["example.com"]` | networkAccess = true | same curl | **succeeds** | `curl example.com` → **HTTP 200** (C1 without the allowlist failed DNS) | ✅ (coarse bool only¹) |
+| C1 | no Claude sandbox (`sandbox.enabled` unset) | networkAccess = **true** | `curl` | **succeeds** — mirrors Claude's own full network | `sandbox.integration.test.ts` — curl exit 0 | ✅ test |
+| C2 | `sandbox.enabled: true`, no allowlist | networkAccess = false | `curl` | **fails** (network blocked) | `sandbox.integration.test.ts` — curl exit ≠ 0 | ✅ test |
+| C3 | `sandbox.enabled: true`, `allowedDomains: ["example.com"]` | networkAccess = true | `curl` | **succeeds** | `sandbox.integration.test.ts` — curl exit 0 | ✅ test |
 
-¹ `networkEnabled` flips the coarse `networkAccess` bool; a non-empty allowlist opens **all** network, not only the listed hosts. Per-host restriction is the deferred network-host mapping below — a curl to an *un*listed domain would also succeed today.
+**Correction (feel-test finding):** `networkEnabled` originally defaulted to
+**deny** unless an allowlist was present — but when Claude is not sandboxing (the
+common case) Claude's own tools have **full network**, so denying it to Codex
+mirrored *more restrictively than Claude*, the one direction we never go. Now
+network is open unless Claude is actively sandboxing; only under Claude's sandbox
+is it default-deny, with an allowlist opening it. It remains a **coarse bool** —
+an allowlist opens *all* network, not only the listed hosts (per-host restriction
+is the deferred network-host mapping below).
 
 ### D. Approval handler — allow auto-accept / deny pre-decline (`pump.ts`)
 
