@@ -13,6 +13,13 @@ on:
 permissions:
   contents: write
 
+# Serialize runs on the same ref so release jobs never race on the
+# marketplace-pointer push. cancel-in-progress:false → queue, don't cancel,
+# so an in-flight release finishes publishing before the next one starts.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   ci:
     runs-on: ubuntu-latest
