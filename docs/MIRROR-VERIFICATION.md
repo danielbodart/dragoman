@@ -9,6 +9,24 @@ manually-confirmed.
 Verified against `codex-cli 0.150.1`, Dragoman binary built from the commit noted
 in each result. Re-run after a Codex upgrade.
 
+## Now an executable, ratcheting suite
+
+These probes are now **live integration tests** under `test/integration/`, not
+just a manual log — this doc is the human-readable index; the tests are the
+executable truth. They are ratcheted (`verifyOnce`): each runs once until green,
+records a marker under `test/integration/.state/`, then is skipped; `bun test`
+on a machine without `codex` skips them entirely. Delete a marker (or the whole
+`.state/` dir) to re-run. The sandbox/network rows use the model-free
+`command/exec` RPC (deterministic, free); the approval rows spend one real turn
+each.
+
+**Key finding (codex-cli 0.150.1):** the app-server round-trips
+`item/commandExecution/requestApproval` to the client only under
+`approvalPolicy: untrusted` (Claude's `plan` posture). Under `on-request` Codex
+self-approves via an internal `item/autoApprovalReview` and **does not** ask the
+client. So Dragoman's elicitation bridge is chiefly exercised in `plan` mode;
+`on-request` modes lean on Codex's own review plus the sandbox boundary.
+
 ## How a probe works
 
 A probe is a `codex_run` under a chosen `posture`, phrased so Codex's own
@@ -57,7 +75,7 @@ decision). That harness is deferred to avoid burning model tokens on every run.
 |---|---|---|---|---|---|---|
 | A1 | `bypassPermissions` | never + danger-full-access | write `~/.dragoman-probe-a1.txt` (outside workspace) | write **succeeds**, no prompt | write succeeded; file confirmed on disk | ✅ |
 | A2 | `dontAsk` | never + workspace-write | write `./probe-a2-in.txt` (cwd) **and** `~/.dragoman-probe-a2-out.txt` (outside); report both | in-cwd **succeeds**; outside **fails**, no prompt | in-cwd wrote; outside rejected — *"writing outside of the project; rejected by user approval settings"*, file absent | ✅ |
-| A3 | `plan` | untrusted + read-only | write `./probe-plan.txt` | write blocked / **approval fires** (`waiting-approval`) | — | 🚧 needs harness |
+| A3 | `plan` | untrusted + read-only | write under a read-only policy | write blocked | `sandbox.integration.test.ts` — read-only blocks writes (exit ≠ 0), allows reads | ✅ test |
 | A4 | `default` | on-request + workspace-write | write outside cwd (`~/.dragoman-probe-a4.txt`) | **approval fires**, then (if granted) write succeeds | outside write **succeeded** where the identical write under `never` (A2) was **rejected** — success is reachable only via a granted approval, so on-request **did** fire an approval (auto-answered by the headless probe) | ✅ by contrast |
 
 ### B. Sandbox scope (`sandboxModeFor` / `sandboxPolicyFor`)
@@ -66,7 +84,7 @@ decision). That harness is deferred to avoid burning model tokens on every run.
 |---|---|---|---|---|---|---|
 | B1 | `dontAsk` (workspace-write) | writableRoots = [cwd] | read a file in cwd, then write in cwd | both **succeed** | in-cwd write confirmed by A2 & B2; reads are unrestricted under every sandbox | ✅ (via A2/B2) |
 | B2 | `dontAsk`, `additionalDirectories: [/home/dan/dragoman-extra]` | writableRoots = [cwd, that dir] | write into that extra dir | **succeeds** (proves writableRoots carried) | write to the outside dir **succeeded** (A2's outside write was rejected); file confirmed | ✅ |
-| B3 | `plan` (read-only) | readOnly | read a file, then attempt a write | read ok; write blocked | — | 🚧 needs harness (write-block masked by headless auto-accept) |
+| B3 | `plan` (read-only) | readOnly | read a file, then attempt a write | read ok; write blocked | `sandbox.integration.test.ts` — read succeeds (exit 0), write blocked (exit ≠ 0) | ✅ test |
 
 ### C. Network access bool (`networkEnabled`)
 
@@ -77,13 +95,18 @@ decision). That harness is deferred to avoid burning model tokens on every run.
 
 ¹ `networkEnabled` flips the coarse `networkAccess` bool; a non-empty allowlist opens **all** network, not only the listed hosts. Per-host restriction is the deferred network-host mapping below — a curl to an *un*listed domain would also succeed today.
 
-### D. Execpolicy allow → auto-accept (`pump.ts` `commandTokenCandidates`)
+### D. Approval handler — allow auto-accept / deny pre-decline (`pump.ts`)
 
-| # | Posture / setting | Behaviour | Probe | Expected observable | Actual | Verdict |
-|---|---|---|---|---|---|---|
-| D1 | `default`, `allow: ["Bash(echo probe:*)"]` | matching command auto-accepted with `acceptWithExecpolicyAmendment` | ask Codex to run `echo probe hello` | runs with **no human prompt** (no `waiting-approval`) | — | 🚧 needs harness (headless auto-accepts, so "no prompt" is unobservable) |
-| D2 | `default`, same allow | non-matching command still prompts | ask Codex to run a different escalating command | **approval fires** | — | 🚧 needs harness |
-| D3 | `default`, `allow: ["Bash(echo probe:*)"]` | compound command NOT auto-accepted (security fix) | ask Codex to run `echo probe hello && id` | **approval fires** (not auto-accepted) | covered by the `pump.test.ts` unit regression; live-fire needs harness | 🚧 needs harness |
+Verified live under `plan` (untrusted), the posture that actually round-trips
+approvals (see the key finding above); `pump.test.ts` unit-covers the same logic
+against `FakeAppServer`, including the compound-command security guard.
+
+| # | Setting | Behaviour | Evidence | Verdict |
+|---|---|---|---|---|
+| D1 | `allow: ["Bash(echo dragoman-probe:*)"]` | matching command auto-accepted, no prompt | `approval.integration.test.ts` — allow rule → `asks == 0` (elicitation never fired) | ✅ test |
+| D2 | no matching rule | command prompts the human | `approval.integration.test.ts` — unmatched → `asks > 0` (elicitation fired) | ✅ test |
+| D3 | `deny: ["Bash(echo:*)"]` | matching command pre-declined, no prompt | `approval.integration.test.ts` — deny rule → `asks == 0`, Codex logs `Rejected("rejected by user")` | ✅ test |
+| D4 | compound command NOT auto-accepted (security fix) | — | `pump.test.ts` unit regression (live-fire flaky on model phrasing) | ✅ unit |
 
 ---
 

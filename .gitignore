@@ -22,3 +22,6 @@ build/
 .idea/
 .vscode/
 *.log
+
+# Ratchet markers for live integration tests
+test/integration/.state/

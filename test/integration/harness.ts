@@ -1,0 +1,101 @@
+/**
+ * Shared plumbing for the live integration tests.
+ *
+ * These talk to a REAL `codex app-server` through Dragoman's own seams — the
+ * point is to prove Codex HONOURS what `mirror()` emits, the half unit tests
+ * can't reach. Two styles sit on top of this:
+ *
+ *  - Sandbox/network probes call `command/exec` directly (`exec`), which runs a
+ *    command in the sandbox with a given `sandboxPolicy` and NO thread, turn, or
+ *    model call — deterministic and free.
+ *  - Approval probes wire the full `ThreadRuns` + pump stack with a
+ *    `ScriptedElicitation`, and spend one real model turn to make Codex request
+ *    an approval.
+ *
+ * Each test gets its OWN `codex app-server` via `withCodex` (fresh process, one
+ * notification reader — sharing one across pumps would break that single-reader
+ * invariant), and closes it in `finally`.
+ */
+import { mkdtempSync, rmSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
+import { AppServerProcess, type AppServerConn } from "../../src/codex.ts";
+import type { Approval, ElicitationChannel } from "../../src/elicitation.ts";
+import type { EffectiveSettings } from "../../src/settings.ts";
+import type { RunSnapshot, ThreadRuns } from "../../src/thread-run.ts";
+import type { SandboxPolicy } from "../../generated/codex-protocol/ts/v2/SandboxPolicy.ts";
+import type { CommandExecResponse } from "../../generated/codex-protocol/ts/v2/CommandExecResponse.ts";
+
+/** Run `fn` against a fresh, initialized `codex app-server`, always closing it. */
+export async function withCodex<T>(fn: (conn: AppServerConn) => Promise<T>): Promise<T> {
+  const conn = await AppServerProcess.start();
+  try {
+    return await fn(conn);
+  } finally {
+    conn.close();
+  }
+}
+
+/** Run one command in the sandbox under `sandboxPolicy` — no thread/turn/model. */
+export async function exec(
+  conn: AppServerConn,
+  command: readonly string[],
+  cwd: string,
+  sandboxPolicy: SandboxPolicy,
+): Promise<CommandExecResponse> {
+  return (await conn.request("command/exec", { command: [...command], cwd, sandboxPolicy })) as CommandExecResponse;
+}
+
+/**
+ * An `ElicitationChannel` that records every ask and answers with a fixed
+ * decision — the test's stand-in for the human. `asks` is the evidence that an
+ * approval fired (or, when empty, that one did not).
+ */
+export class ScriptedElicitation implements ElicitationChannel {
+  readonly asks: Approval[] = [];
+  constructor(private readonly decision: string = "decline") {}
+  async ask(approval: Approval): Promise<string> {
+    this.asks.push(approval);
+    return this.decision;
+  }
+}
+
+/** Poll a run until it reaches a terminal state, or throw on timeout. */
+export async function settle(runs: ThreadRuns, handle: string, timeoutMs = 120_000): Promise<RunSnapshot> {
+  const start = Date.now();
+  for (;;) {
+    const snapshot = runs.status(handle);
+    if (snapshot && (snapshot.status === "done" || snapshot.status === "error")) return snapshot;
+    if (Date.now() - start > timeoutMs) {
+      throw new Error(`run ${handle} did not settle in ${timeoutMs}ms (status ${snapshot?.status ?? "unknown"})`);
+    }
+    await Bun.sleep(500);
+  }
+}
+
+/** Effective settings with empty defaults, overridable field by field. */
+export function settings(overrides: Partial<EffectiveSettings> = {}): EffectiveSettings {
+  return {
+    allow: [], deny: [], ask: [], additionalDirectories: [],
+    denyRead: [], denyWrite: [], allowRead: [], allowWrite: [],
+    allowedDomains: [], deniedDomains: [],
+    ...overrides,
+  };
+}
+
+/**
+ * A throwaway directory under $HOME, passed to `fn` and removed afterwards.
+ *
+ * Deliberately NOT under `/tmp`: `workspace-write` keeps `/tmp` writable
+ * (`excludeSlashTmp:false`), so a `/tmp` dir is inside the default writable set
+ * and would make "outside the workspace" probes falsely pass. `$HOME` is outside
+ * it, so a write there succeeds ONLY when the policy actually grants the path.
+ */
+export async function withTempDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
+  const dir = mkdtempSync(join(homedir(), ".dragoman-probe-"));
+  try {
+    return await fn(dir);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
