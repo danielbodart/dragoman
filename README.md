@@ -25,6 +25,12 @@ Dragoman fixes both by talking to the Codex **app-server** — the one supported
 actively-developed interface — and mapping its
 approval, mode, permissions and progress flows onto Claude Code's own native mechanisms.
 
+| On the axes that matter | Official Codex plugin | Dragoman |
+|---|---|---|
+| Approvals | hang — must disable the sandbox | native async prompt |
+| Progress | one final blob | live heartbeat |
+| Permissions & mode | not mapped | mirrors Claude's settings |
+
 ## The idea in one line
 
 **Mirror Claude, don't reinvent it.** Dragoman reads Claude Code's own settings and mirrors
