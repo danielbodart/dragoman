@@ -148,23 +148,30 @@ describe("the approval bridge — the anti-hang property", () => {
     expect(elicitation.asks).toEqual([]);
   });
 
-  test("auto-accept prefers Codex's proposed execpolicy amendment", async () => {
+  test("Codex's own proposed amendment is NOT trusted to skip the human", async () => {
+    // Fail-open guard: proposedExecpolicyAmendment is supplied by Codex, the
+    // party this gate mediates. A command the real string can't justify must
+    // still reach the human even when Codex proposes a matching prefix.
     const settings = (): EffectiveSettings => ({ ...emptySettings(), allow: ["Bash(npm run test:*)"] });
     const { conn, elicitation, runs, threadId } = bridge("t1", settings);
     await runs.start("run the tests", "/repo");
 
-    expect(await conn.emitServerRequest(requestApproval(threadId, "unparseable wrapper", ["npm", "run", "test", "unit"]))).toEqual({
-      decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: ["npm", "run", "test"] } },
-    });
-    expect(elicitation.asks).toEqual([]);
+    const replyPromise = conn.emitServerRequest(requestApproval(threadId, "rm -rf /", ["npm", "run", "test", "unit"]));
+    await Bun.sleep(1);
+    expect(elicitation.waiting).toBe(true);
+    elicitation.answer("decline");
+    expect(await replyPromise).toEqual({ decision: "decline" });
   });
 
-  test("shell operators limit matching to the first wrapped script segment", async () => {
-    const settings = (): EffectiveSettings => ({ ...emptySettings(), allow: ["Bash(rm:*)"] });
+  test("a chained command whose first segment matches is NOT auto-accepted", async () => {
+    // Shell-chaining bypass: auto-approval covers the WHOLE command, so a benign
+    // matching prefix must not carry a chained `&& rm` past the gate. Any command
+    // that is more than a lone simple command falls through to the human.
+    const settings = (): EffectiveSettings => ({ ...emptySettings(), allow: ["Bash(npm run test:*)"] });
     const { conn, elicitation, runs, threadId } = bridge("t1", settings);
-    await runs.start("clean up", "/repo");
+    await runs.start("run the tests", "/repo");
 
-    const replyPromise = conn.emitServerRequest(requestApproval(threadId, "bash -lc 'echo hi && rm -rf x'"));
+    const replyPromise = conn.emitServerRequest(requestApproval(threadId, "bash -lc 'npm run test && rm -rf /'"));
     await Bun.sleep(1);
     expect(elicitation.waiting).toBe(true);
     elicitation.answer("decline");

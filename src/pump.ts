@@ -121,18 +121,39 @@ function matchesPrefix(
   return undefined;
 }
 
-/** Candidate command tokens, ordered from Codex's normalized form to raw fallback. */
+/**
+ * The command tokens eligible for an auto-approval match, or none.
+ *
+ * Only `params.command` is trusted — never Codex's self-proposed
+ * `proposedExecpolicyAmendment`, since Codex is the very party this gate
+ * mediates: letting its proposed prefix decide "skip the human" would fail open
+ * (Codex could propose `npm run test` while actually running `rm -rf /`). We
+ * derive the tokens ourselves from the real command string, unwrapping a shell
+ * wrapper (`bash -lc '<script>'`) to its inner script first.
+ */
 function commandTokenCandidates(params: CommandExecutionRequestApprovalParams): readonly (readonly string[])[] {
-  const candidates: (readonly string[])[] = [];
-  if (params.proposedExecpolicyAmendment) candidates.push(params.proposedExecpolicyAmendment);
-
   const command = params.command?.trim();
-  if (!command) return candidates;
+  if (!command) return [];
 
-  const script = unwrapShellScript(command);
-  if (script) candidates.push(tokensBeforeShellOperator(script));
-  candidates.push(command.split(/\s+/));
-  return candidates;
+  const source = unwrapShellScript(command) ?? command;
+  const tokens = simpleCommandTokens(source);
+  return tokens ? [tokens] : [];
+}
+
+/**
+ * The tokens of a single simple command, or undefined if `source` is anything
+ * more — a chain, substitution, redirect, glob, variable, or quoting.
+ *
+ * Auto-approval covers the WHOLE command, so it must never match a compound
+ * command: a benign allow-prefix (`npm run test`) matching the first segment of
+ * `npm run test && rm -rf /` would otherwise approve the chained `rm` too. So
+ * anything not provably a lone simple command — every token drawn from a
+ * conservative safe-character allowlist — falls through to the human instead.
+ */
+function simpleCommandTokens(source: string): readonly string[] | undefined {
+  const tokens = source.trim().split(/\s+/);
+  const safe = /^[A-Za-z0-9_./:=@,+-]+$/;
+  return tokens.length > 0 && tokens.every((token) => safe.test(token)) ? tokens : undefined;
 }
 
 /** True when `tokens` starts with every non-empty `prefix` token in order. */
@@ -151,12 +172,6 @@ function unwrapShellScript(command: string): string | undefined {
     return argument.length >= 2 && argument.at(-1) === quote ? argument.slice(1, -1) : undefined;
   }
   return /^\S+$/.test(argument) ? argument : undefined;
-}
-
-/** Tokenize only the first shell segment, so later chained commands cannot match. */
-function tokensBeforeShellOperator(script: string): readonly string[] {
-  const firstSegment = script.split(/&&|\|\||;|\||&|\n/, 1)[0]!.trim();
-  return firstSegment ? firstSegment.split(/\s+/) : [];
 }
 
 /** The human-facing prompt for a command approval. */
