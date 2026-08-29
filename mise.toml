@@ -16,6 +16,10 @@ run = "bun run.ts test"
 depends = ["check"]
 run = "bun run.ts build"
 
+[tasks.package]
+depends = ["install"]
+run = "bun run.ts package"
+
 [tasks.release]
 depends = ["check", "test", "build"]
 run = "bun run.ts build"

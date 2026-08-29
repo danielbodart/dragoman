@@ -59,20 +59,40 @@ Codex config.
 ## Status
 
 **Working.** The mappings above are implemented and verified — unit-tested and
-locked by live integration tests against real Codex. Still to come: packaging as a
-Claude Code plugin, a skill/subagent so it feels fully native, and the fine-grained
-filesystem rules. See [`docs/PLAN.md`](docs/PLAN.md).
+locked by live integration tests against real Codex. It installs as a native Claude
+Code **plugin** — a `/codex` command, a `codex` subagent, and a usage skill so
+Claude reaches for it naturally. Still to come: the fine-grained filesystem rules
+and model-answered approvals. See [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Install
 
-Build the single binary and register it as an MCP server:
+Dragoman is a Claude Code plugin. Add the marketplace and install it:
 
-```bash
-mise run build
-claude mcp add dragoman -s user -- "$PWD/dist/dragoman" serve
+```
+/plugin marketplace add danielbodart/dragoman
+/plugin install dragoman@dragoman
 ```
 
-Codex must be on your `PATH` (Dragoman spawns `codex app-server`).
+That pulls a single archive carrying the native binary for your platform — **no
+Bun, Node, or build step required**. A tiny launcher picks the right binary at
+runtime. Codex must be on your `PATH` (Dragoman spawns `codex app-server`).
+
+Once installed you get:
+
+- **`/codex <task>`** — hand a task to Codex from the prompt.
+- the **`codex` subagent** — Claude delegates to it for a second implementation,
+  an independent review, or a deep investigation; it drives the run, follows the
+  heartbeat, and reports back in Codex's voice.
+- the underlying **`codex_run` / `codex_status`** MCP tools, if you'd rather drive
+  Codex directly.
+
+### From source
+
+```bash
+mise run build                                             # single binary → dist/dragoman
+claude mcp add dragoman -s user -- "$PWD/dist/dragoman" serve
+mise run package                                           # or the full plugin archive → dist/dragoman-plugin.zip
+```
 
 ## License
 

@@ -52,17 +52,20 @@ permissions onto Claude Code's own mechanisms.
 - Clean process lifecycle — exits on signal / stdin-close (no stray processes).
 - Empirical verification — unit + ratcheted live integration tests; per-mapping
   evidence in [`MIRROR-VERIFICATION.md`](MIRROR-VERIFICATION.md).
+- **Native integration** — a Claude Code **skill** (usage guidance, so Claude
+  reaches for Codex naturally), a **`codex` subagent** (drives the run with the
+  right posture and narrates the heartbeat in its own voice), and a **`/codex`**
+  command.
+- **Packaged as a Claude Code plugin** — installable via
+  `/plugin marketplace add danielbodart/dragoman` + `/plugin install`. The plugin
+  archive bundles all four platform binaries (darwin/linux × arm64/x64); a
+  committed POSIX **launcher** selects the right one at runtime — no Bun/Node, no
+  build step, no first-run download. CI builds the archive and repoints
+  `marketplace.json` (pinned url+sha256) on every trunk release; the pointer commit
+  is `paths-ignore`d so it never loops.
 
 ## Remaining
 
-- **Native integration (next).** Make Codex *feel* built-in, not a raw tool:
-  - a Claude Code **skill** so Claude reaches for `codex_run` naturally (and a
-    `/codex`-style affordance), carrying the usage guidance;
-  - likely a **subagent definition** — an agent that drives Codex with the right
-    posture and narrates the heartbeat in its own voice.
-  This is the missing "feels native" piece.
-- **Packaging as a Claude Code plugin** — install via the plugin, not a manual
-  `claude mcp add`. Plus an icon and install docs.
 - **Fine-grained filesystem mapping** — `sandbox.filesystem.allowRead/denyRead/
   allowWrite/denyWrite` → profile `file_system` entries. The `file_system` key
   loads; the read/deny **access** semantics still need working out (writable roots

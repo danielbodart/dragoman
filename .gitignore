@@ -25,3 +25,7 @@ build/
 
 # Ratchet markers for live integration tests
 test/integration/.state/
+
+# Local Claude Code state (per-developer settings, session worktrees)
+.claude/settings.local.json
+.claude/worktrees/

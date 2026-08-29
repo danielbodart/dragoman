@@ -1,0 +1,46 @@
+#!/bin/sh
+# Launcher: pick the native Dragoman binary for this platform and exec it.
+#
+# This is the command Claude Code's plugin `.mcp.json` runs. It does NO network
+# and needs NO runtime (Bun/Node) — the native binary is shipped inside the plugin
+# archive (built by CI, one per platform). The launcher just selects the right one.
+#
+# It resolves `dragoman-<os>-<arch>` from its own directory, matching CI's asset
+# naming; if only a single unsuffixed `dragoman` is present, it uses that. Failing
+# either, it errors clearly rather than hanging the MCP handshake.
+set -eu
+
+dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+os=$(uname -s | tr '[:upper:]' '[:lower:]')
+case "$os" in
+  darwin) os=darwin ;;
+  linux)  os=linux ;;
+  *) echo "dragoman: unsupported OS '$os'" >&2; exit 1 ;;
+esac
+
+arch=$(uname -m)
+case "$arch" in
+  arm64|aarch64) arch=arm64 ;;
+  x86_64|amd64)  arch=x64 ;;
+  *) echo "dragoman: unsupported architecture '$arch'" >&2; exit 1 ;;
+esac
+
+bin="$dir/dragoman-$os-$arch"
+if [ ! -f "$bin" ]; then
+  # Single-binary bundle (only this platform shipped) falls back to a bare name.
+  if [ -f "$dir/dragoman.bin" ]; then
+    bin="$dir/dragoman.bin"
+  else
+    echo "dragoman: no binary for $os-$arch in $dir" >&2
+    echo "dragoman: expected '$dir/dragoman-$os-$arch' (or '$dir/dragoman.bin')" >&2
+    exit 1
+  fi
+fi
+
+# Archive extraction can drop the executable bit; restore it (the file is
+# user-owned under ~/.claude, so this succeeds even if the dir is otherwise
+# treated as read-only). Ignore failure — the file may already be executable.
+[ -x "$bin" ] || chmod u+rx "$bin" 2>/dev/null || true
+
+exec "$bin" "$@"
