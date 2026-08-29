@@ -132,11 +132,17 @@ export class AppServerProcess implements AppServerConn {
    * `experimentalApi` unlocks the v2 methods. `command` is injectable for tests
    * and for pointing at a specific codex binary.
    */
-  static async start(command: readonly string[] = ["codex", "app-server"]): Promise<AppServerProcess> {
+  static async start(
+    command: readonly string[] = ["codex", "app-server"],
+    env: Record<string, string> = {},
+  ): Promise<AppServerProcess> {
     const proc = Bun.spawn(command as string[], {
       stdin: "pipe",
       stdout: "pipe",
       stderr: "inherit", // codex diagnostics pass through to our stderr, never onto the protocol
+      // Merge over the inherited environment — used to point CODEX_HOME at
+      // Dragoman's isolated home so network profiles never touch the user's ~/.codex.
+      env: { ...process.env, ...env },
     });
 
     const conn = new AppServerProcess(proc);
