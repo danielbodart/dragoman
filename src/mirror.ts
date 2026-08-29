@@ -12,6 +12,7 @@ import { isAbsolute } from "node:path";
 import type { EffectiveSettings } from "./settings.ts";
 import type { DomainAction, FsAccess, ManagedProfile, ProfileFilesystem } from "./codex-config.ts";
 import type { AskForApproval } from "../generated/codex-protocol/ts/v2/AskForApproval.ts";
+import type { ApprovalsReviewer } from "../generated/codex-protocol/ts/v2/ApprovalsReviewer.ts";
 import type { ExecPolicyAmendment } from "../generated/codex-protocol/ts/ExecPolicyAmendment.ts";
 
 /**
@@ -31,6 +32,14 @@ export type ClaudeMode =
 /** The Codex policy Dragoman applies to a thread/turn, mirroring Claude. */
 export interface CodexPolicy {
   readonly approvalPolicy: AskForApproval;
+  /**
+   * Who adjudicates approval escalations. Orthogonal to `approvalPolicy` (which
+   * says *when* to ask). `auto` mode routes to Codex's model reviewer
+   * (`auto_review`) — the closest analog to Claude's auto classifier, since
+   * routing to Claude's own model is not available (no MCP sampling). Undefined
+   * → Codex's default (`user`), i.e. the human elicitation seam.
+   */
+  readonly approvalsReviewer?: ApprovalsReviewer;
   /** execpolicy prefix allows, from Claude's `allow` Bash rules. */
   readonly execpolicyAmendments: readonly ExecPolicyAmendment[];
   /** Command token prefixes from Claude's `deny` Bash rules — pre-declined. */
@@ -150,10 +159,11 @@ const SAFE_DEFAULT: ClaudeMode = "default";
  */
 export function mirror(settings: EffectiveSettings, mode: ClaudeMode): CodexPolicy {
   const approvalPolicy = approvalFor(mode);
+  const approvalsReviewer = reviewerFor(mode);
   const execpolicyAmendments = bashPrefixes(settings.allow);
   const denyPrefixes = bashPrefixes(settings.deny);
   const profile = profileFor(settings, mode);
-  return { approvalPolicy, execpolicyAmendments, denyPrefixes, profile };
+  return { approvalPolicy, approvalsReviewer, execpolicyAmendments, denyPrefixes, profile };
 }
 
 /**
@@ -195,6 +205,21 @@ function approvalFor(mode: ClaudeMode): AskForApproval {
     case "auto":
       return "on-request"; // ask when Codex hits something the sandbox can't cover
   }
+}
+
+/**
+ * Mode → who adjudicates approval escalations.
+ *
+ * `auto` is Claude's model-judged mode, so its faithful analog is Codex's model
+ * reviewer, `auto_review` — it classifies escalations (sandbox escapes, blocked
+ * network, …) with a risk framework rather than gating the human. Every other
+ * mode leaves the reviewer at Codex's default (`user` → the human elicitation
+ * seam): `plan`/`default`/`acceptEdits` prompt the human, `bypass`/`dontAsk`
+ * never ask so a reviewer is moot. Routing to Claude's OWN model is not an
+ * option — Claude Code advertises no MCP sampling (see the recorded finding).
+ */
+function reviewerFor(mode: ClaudeMode): ApprovalsReviewer | undefined {
+  return mode === "auto" ? "auto_review" : undefined;
 }
 
 /**

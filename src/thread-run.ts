@@ -86,14 +86,17 @@ export class ThreadRuns {
     // profile. `sandbox` is NOT sent with a profile — they are mutually exclusive.
     // The one exception is the danger posture (no profile), which uses the
     // `danger-full-access` sandbox enum directly (it means "no sandbox" anyway).
+    // Who adjudicates escalations (auto → auto_review); orthogonal to the policy.
+    const reviewer = policy.approvalsReviewer ? { approvalsReviewer: policy.approvalsReviewer } : {};
     const params: ThreadStartParams = policy.profile
       ? {
           cwd,
           approvalPolicy: policy.approvalPolicy,
+          ...reviewer,
           permissions: policy.profile.id,
           runtimeWorkspaceRoots: [cwd, ...settings.additionalDirectories],
         }
-      : { cwd, approvalPolicy: policy.approvalPolicy, sandbox: "danger-full-access" };
+      : { cwd, approvalPolicy: policy.approvalPolicy, ...reviewer, sandbox: "danger-full-access" };
     const thread = (await conn.request("thread/start", params)) as ThreadStartResponse;
     const handle = thread.thread.id;
 
@@ -115,6 +118,7 @@ export class ThreadRuns {
         threadId: handle,
         input: [{ type: "text", text: prompt, text_elements: [] }],
         approvalPolicy: policy.approvalPolicy,
+        ...reviewer,
         // Profile threads re-assert their profile per turn; the danger thread
         // inherits its sandbox from thread/start (nothing to override here).
         ...(policy.profile ? { permissions: policy.profile.id } : {}),

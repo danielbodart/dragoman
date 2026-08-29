@@ -68,6 +68,20 @@ describe("mirror — mode → approval + profile scope", () => {
   }
 });
 
+describe("mirror — approvalsReviewer (who adjudicates escalations)", () => {
+  test("auto → auto_review (Codex's model classifies, mirroring Claude's auto)", () => {
+    expect(mirror(settings(), "auto").approvalsReviewer).toBe("auto_review");
+  });
+
+  // Every other mode leaves the reviewer at Codex's default (user / human seam):
+  // asking modes prompt the human, never-ask modes make a reviewer moot.
+  for (const mode of ["plan", "default", "manual", "acceptEdits", "dontAsk", "bypassPermissions"] as const) {
+    test(`${mode} → no reviewer (defaults to user)`, () => {
+      expect(mirror(settings(), mode).approvalsReviewer).toBeUndefined();
+    });
+  }
+});
+
 describe("mirror — network posture → profile.network.enabled", () => {
   const enabled = (s: Partial<EffectiveSettings>) => mirror(settings(s), "default").profile!.network!.enabled;
 
