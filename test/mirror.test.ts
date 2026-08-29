@@ -96,18 +96,21 @@ describe("mirror — mode → fallback knobs (commandFallback / fileChange)", ()
   }
 });
 
-describe("mirror — mode → scope (judged modes force :workspace as the review trigger)", () => {
-  test("plan → :read-only, regardless of sandbox", () => {
-    expect(mirror(settings(), "plan").profile!.base).toBe(":read-only");
-    expect(mirror(settings({ sandboxEnabled: true }), "plan").profile!.base).toBe(":read-only");
-  });
-
-  // Sandboxed modes → :workspace even when Claude isn't sandboxing — the sandbox is
-  // the review trigger. Includes dontAsk (never-ask, but still sandboxed).
-  for (const mode of ["default", "manual", "acceptEdits", "auto", "dontAsk"] as const) {
+describe("mirror — mode → scope (workspaceWrite only for the auto-write modes)", () => {
+  // Auto-write modes → :workspace (writes run without a prompt, matching Claude).
+  for (const mode of ["acceptEdits", "auto"] as const) {
     test(`${mode} → :workspace (sandbox on OR off)`, () => {
       expect(mirror(settings(), mode).profile!.base).toBe(":workspace");
       expect(mirror(settings({ sandboxEnabled: true }), mode).profile!.base).toBe(":workspace");
+    });
+  }
+
+  // Ask / no-auto-write modes → :read-only (a write escalates or is denied — never
+  // more permissive than Claude, which prompts/blocks writes in these modes).
+  for (const mode of ["plan", "default", "manual", "dontAsk"] as const) {
+    test(`${mode} → :read-only (writes escalate or are denied)`, () => {
+      expect(mirror(settings(), mode).profile!.base).toBe(":read-only");
+      expect(mirror(settings({ sandboxEnabled: true }), mode).profile!.base).toBe(":read-only");
     });
   }
 
@@ -163,16 +166,17 @@ describe("mirror — allow rules → execpolicy amendments", () => {
 });
 
 describe("mirror — profiles (the unified scope + network axis)", () => {
-  test("scope: plan→read-only, judged→workspace (even unsandboxed), never-ask→none", () => {
+  test("scope: auto-write modes→workspace, ask modes→read-only, bypass→none", () => {
+    expect(profileFor(settings(), "acceptEdits")!.base).toBe(":workspace");
+    expect(profileFor(settings(), "auto")!.base).toBe(":workspace");
+    expect(profileFor(settings(), "default")!.base).toBe(":read-only"); // Manual asks for writes
     expect(profileFor(settings(), "plan")!.base).toBe(":read-only");
-    expect(profileFor(settings(), "default")!.base).toBe(":workspace"); // sandbox off, still workspace
-    expect(profileFor(settings({ sandboxEnabled: true }), "auto")!.base).toBe(":workspace");
-    expect(profileFor(settings(), "bypassPermissions")).toBeUndefined(); // never-ask → danger
+    expect(profileFor(settings(), "bypassPermissions")).toBeUndefined(); // danger
   });
 
   test("profile id is derived from the base scope", () => {
     expect(profileFor(settings(), "plan")!.id).toBe("dragoman-read-only");
-    expect(profileFor(settings(), "default")!.id).toBe("dragoman-workspace");
+    expect(profileFor(settings(), "auto")!.id).toBe("dragoman-workspace");
   });
 
   test("network mirrors Claude: enabled when unsandboxed, domains from allow/deny + WebFetch", () => {

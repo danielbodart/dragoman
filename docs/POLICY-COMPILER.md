@@ -260,16 +260,18 @@ command → `elicit`/`decline`) and `fileChange` (edit → `elicit`/`accept`/`de
 
 | Claude mode | scope | `approvalPolicy` | reviewer | `commandFallback` | `fileChange` | effect |
 |---|---|---|---|---|---|---|
-| `plan` | `readOnly` | untrusted | user | elicit | elicit | read-only exploration; escapes → human |
-| `default`/`manual` | `workspaceWrite` | untrusted | user | elicit | elicit | reads/in-workspace run; edits + escapes → human |
+| `plan` | `readOnly` | untrusted | user | elicit | elicit | read-only exploration; writes blocked/escalate |
+| `default`/`manual` | `readOnly` | untrusted | user | elicit | elicit | reads auto; **writes/edits escalate → human** (Manual "ask before edits") |
 | `acceptEdits` | `workspaceWrite` | untrusted | user | elicit | **accept** | edits + fs cmds (`mkdir`/`touch`/`rm`/`rmdir`/`mv`/`cp`/`sed`) auto; other bash/escapes → human |
 | `auto` | `workspaceWrite` | `granular` | **`auto_review`** | elicit | elicit | escapes → model-judged ✅ **verified** |
-| `dontAsk` | `workspaceWrite` | untrusted | — | **decline** | **decline** | only pre-approved (allow rules) + read-only run; unmatched refused, never asks |
+| `dontAsk` | `readOnly` | untrusted | — | **decline** | **decline** | only pre-approved (allow rules) + reads run; writes/unmatched refused, never asks |
 | `bypassPermissions` | `dangerFullAccess` | never | — | — | — | everything, unconfined, no check |
 
-Mode and scope are **not** fully orthogonal: a sandboxed mode forces a
-`workspaceWrite` sandbox regardless of Claude's own setting, because the sandbox is
-what makes a review/escape happen. Only `bypassPermissions` goes `dangerFullAccess`.
+The scope axis is exactly **"does the mode auto-allow writes?"** — `workspaceWrite`
+only for `acceptEdits`/`auto`; `readOnly` for the ask/blocked/pre-approved modes
+(a write is an escape that escalates or is denied — **never more permissive than
+Claude**, which prompts/blocks writes there); `dangerFullAccess` only for
+`bypassPermissions`.
 
 `auto` is the **live-verified** row. The others are docs-derived best-effort and
 **not yet live-probed** — in particular whether a `workspaceWrite` sandbox raises

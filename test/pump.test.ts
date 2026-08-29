@@ -95,14 +95,14 @@ describe("codex_run / codex_status", () => {
     const { conn, runs } = bridge();
     await runs.start("do the thing", "/repo");
     const start = conn.requests.find((r) => r.method === "thread/start");
-    // Empty settings + no posture → mode "default" (Manual) → :workspace profile
-    // (in-workspace commands auto-run, matching auto-allow) + untrusted so escapes
-    // are raised + reviewer "user" (escapes → the human). Sandbox enum is NOT sent.
+    // Empty settings + no posture → mode "default" (Manual): reads-only, ask for
+    // writes → :read-only profile + untrusted (escapes raised) + reviewer "user"
+    // (writes/edits escalate → the human). Sandbox enum is NOT sent.
     const params = start?.params as { cwd?: string; approvalPolicy?: unknown; approvalsReviewer?: unknown; permissions?: string; sandbox?: unknown };
     expect(params.cwd).toBe("/repo");
     expect(params.approvalPolicy).toBe("untrusted");
     expect(params.approvalsReviewer).toBe("user");
-    expect(params.permissions).toBe("dragoman-workspace");
+    expect(params.permissions).toBe("dragoman-read-only");
     expect(params.sandbox).toBeUndefined();
   });
 

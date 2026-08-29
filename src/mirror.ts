@@ -80,25 +80,29 @@ export function profileIdForBase(base: string): string {
  * The Codex profile base for this run — or `undefined` for **no profile**, meaning
  * `danger-full-access` (no OS sandbox).
  *
- *   - `plan` → `:read-only` — a read-only intent.
- *   - `bypassPermissions` → `undefined` → `danger-full-access`: full access, no
- *     sandbox and no review. (`dontAsk` is NOT the same: it "proceeds without
- *     asking, still sandboxed" → `:workspace` + `never` approval below.)
- *   - every other mode (`default` / `manual` / `acceptEdits` / `auto` / `dontAsk`)
- *     → `:workspace` — **even when Claude isn't sandboxing**. The sandbox is the
- *     review *trigger*: an escape past it is what raises Codex's approval review
- *     (verified — no sandbox means the classifier never runs). The reviewer then
- *     grants the escapes (`user` → the human, `auto_review` → Codex's model), so
- *     the net effect is unconfined-but-judged, mirroring Claude. The
- *     `filesystem`/`network` tables refine the workspace when Claude IS sandboxing.
+ * The scope axis is exactly "does this mode auto-allow writes?" — never granting
+ * more than Claude's mode would:
  *
- * So scope is not purely sandbox-derived: a judged mode forces `:workspace`
- * regardless of `sandboxEnabled`. See docs/POLICY-COMPILER.md.
+ *   - `:workspace` for the **auto-write** modes: `acceptEdits` (edits auto) and
+ *     `auto` (everything, classifier-judged). Here workspace writes run without a
+ *     prompt, matching Claude, and an escape past the workspace raises a review.
+ *   - `:read-only` for the **ask / no-auto-write** modes: `default`/`manual` (reads
+ *     auto; a write/edit must ESCALATE → the human, mirroring Manual's "ask before
+ *     edits"), `plan` (explore, no writes), and `dontAsk` (writes aren't
+ *     pre-approved, so they're refused). Giving these `:workspace` would let
+ *     in-workspace writes run WITHOUT the prompt Claude requires — mirroring more
+ *     permissively than Claude, which we never do.
+ *   - `undefined` → `danger-full-access` for `bypassPermissions`: everything, no
+ *     sandbox, no review.
+ *
+ * `readOnly` still triggers a review — a write is an escape past it — so the
+ * reviewer/fallback (human / decline) handles it. The `filesystem`/`network`
+ * tables refine the profile when Claude is sandboxing. See docs/POLICY-COMPILER.md.
  */
 function baseFor(_settings: EffectiveSettings, mode: ClaudeMode): string | undefined {
-  if (mode === "plan") return ":read-only";
   if (mode === "bypassPermissions") return undefined; // danger-full-access: no sandbox
-  return ":workspace"; // includes dontAsk — never-ask, but still sandboxed
+  if (mode === "acceptEdits" || mode === "auto") return ":workspace"; // auto-allow writes
+  return ":read-only"; // plan / default / manual / dontAsk: writes escalate or are denied
 }
 
 /**
