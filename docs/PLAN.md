@@ -53,9 +53,9 @@ permissions onto Claude Code's own mechanisms.
 - Empirical verification — unit + ratcheted live integration tests; per-mapping
   evidence in [`MIRROR-VERIFICATION.md`](MIRROR-VERIFICATION.md).
 - **Native integration** — a Claude Code **skill** (usage guidance, so Claude
-  reaches for Codex naturally), a **`codex` subagent** (drives the run with the
-  right posture and narrates the heartbeat in its own voice), and a **`/codex`**
-  command.
+  reaches for Codex naturally), a **`dragoman:codex` subagent** (drives the run
+  with the right posture and narrates the heartbeat in its own voice), and a
+  **`/dragoman:codex`** command.
 - **Packaged as a Claude Code plugin** — installable via
   `/plugin marketplace add danielbodart/dragoman` + `/plugin install`. The plugin
   archive bundles all four platform binaries (darwin/linux × arm64/x64); a
