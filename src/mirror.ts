@@ -61,9 +61,27 @@ export function profileIdForBase(base: string): string {
   return `dragoman-${base.slice(1)}`;
 }
 
-/** The built-in Codex base scope for a non-danger Claude mode. */
-function baseFor(mode: ClaudeMode): string {
-  return mode === "plan" ? ":read-only" : ":workspace";
+/**
+ * The Codex profile base for this run — or `undefined` for **no profile**, meaning
+ * `danger-full-access` (no OS sandbox).
+ *
+ * Scope is the **sandbox axis**, derived from Claude's sandbox config, NOT from the
+ * permission mode (that's the orthogonal approval axis):
+ *
+ *   - `plan` → `:read-only` — a read-only *intent*, regardless of sandbox.
+ *   - sandbox ON  → `:workspace` — Claude confines bash, so Codex does too (the
+ *     `filesystem`/`network` tables refine it).
+ *   - sandbox OFF → `undefined` → `danger-full-access` — Claude imposes no OS
+ *     sandbox on its bash, so neither do we. Mirroring more restrictively than
+ *     Claude is the one direction we never go.
+ *
+ * Approval (ask/never) rides the separate `approvalPolicy` axis, so e.g.
+ * `bypassPermissions` under an active sandbox is still `:workspace` (confined) with
+ * `never` approvals — not danger.
+ */
+function baseFor(settings: EffectiveSettings, mode: ClaudeMode): string | undefined {
+  if (mode === "plan") return ":read-only";
+  return settings.sandboxEnabled ? ":workspace" : undefined;
 }
 
 /**
@@ -128,10 +146,10 @@ export function filesystemFor(settings: EffectiveSettings): ProfileFilesystem {
   return { paths, workspaceRoots };
 }
 
-/** The profile a thread at this posture selects, or undefined for danger (no profile). */
+/** The profile a thread selects, or undefined for danger-full-access (no profile). */
 export function profileFor(settings: EffectiveSettings, mode: ClaudeMode): ManagedProfile | undefined {
-  if (mode === "bypassPermissions") return undefined; // danger-full-access: not a profile base
-  const base = baseFor(mode);
+  const base = baseFor(settings, mode);
+  if (base === undefined) return undefined; // danger-full-access: not a profile base
   return { id: profileIdForBase(base), base, network: networkFor(settings), filesystem: filesystemFor(settings) };
 }
 

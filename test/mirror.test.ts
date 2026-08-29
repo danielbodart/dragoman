@@ -31,39 +31,43 @@ describe("resolveMode (the three-tier posture)", () => {
   });
 });
 
-describe("mirror — mode → approval + profile scope", () => {
-  test("plan → untrusted + read-only profile", () => {
-    const p = mirror(settings(), "plan");
-    expect(p.approvalPolicy).toBe("untrusted");
-    expect(p.profile!.base).toBe(":read-only");
+// Two orthogonal axes (docs/POLICY-COMPILER.md): the permission MODE drives the
+// approval policy; the SANDBOX config drives the OS scope. They are tested apart.
+describe("mirror — mode → approvalPolicy (the approval axis)", () => {
+  test("plan → untrusted", () => {
+    expect(mirror(settings(), "plan").approvalPolicy).toBe("untrusted");
+  });
+  for (const mode of ["default", "manual", "acceptEdits", "auto"] as const) {
+    test(`${mode} → on-request`, () => {
+      expect(mirror(settings(), mode).approvalPolicy).toBe("on-request");
+    });
+  }
+  for (const mode of ["dontAsk", "bypassPermissions"] as const) {
+    test(`${mode} → never`, () => {
+      expect(mirror(settings(), mode).approvalPolicy).toBe("never");
+    });
+  }
+});
+
+describe("mirror — sandbox config → scope (the sandbox axis, NOT the mode)", () => {
+  test("plan → :read-only profile, regardless of sandbox (read-only intent)", () => {
+    expect(mirror(settings(), "plan").profile!.base).toBe(":read-only");
+    expect(mirror(settings({ sandboxEnabled: true }), "plan").profile!.base).toBe(":read-only");
   });
 
-  test("default → on-request + workspace profile", () => {
-    const p = mirror(settings(), "default");
-    expect(p.approvalPolicy).toBe("on-request");
-    expect(p.profile!.base).toBe(":workspace");
-  });
+  // Sandbox OFF + non-plan → no profile → danger-full-access. Claude imposes no OS
+  // sandbox on its bash, so neither do we — for EVERY non-plan mode, ask or not.
+  for (const mode of ["default", "manual", "acceptEdits", "auto", "dontAsk", "bypassPermissions"] as const) {
+    test(`${mode} + sandbox off → no profile (danger-full-access)`, () => {
+      expect(mirror(settings(), mode).profile).toBeUndefined();
+    });
+  }
 
-  test("bypassPermissions → never, no profile (danger uses the sandbox enum)", () => {
-    const p = mirror(settings(), "bypassPermissions");
-    expect(p.approvalPolicy).toBe("never");
-    expect(p.profile).toBeUndefined();
-  });
-
-  test("dontAsk → never + workspace profile", () => {
-    const p = mirror(settings(), "dontAsk");
-    expect(p.approvalPolicy).toBe("never");
-    expect(p.profile!.base).toBe(":workspace");
-  });
-
-  // manual/acceptEdits/auto share default's posture: on-request + workspace.
-  // (auto ↔ on-request is the intended pairing — both delegate accept/decline to
-  // a model, Codex's autoApprovalReview; see docs/MIRROR-VERIFICATION.md.)
-  for (const mode of ["manual", "acceptEdits", "auto"] as const) {
-    test(`${mode} → on-request + workspace profile (same as default)`, () => {
-      const p = mirror(settings(), mode);
-      expect(p.approvalPolicy).toBe("on-request");
-      expect(p.profile!.base).toBe(":workspace");
+  // Sandbox ON + non-plan → :workspace, independent of the approval mode — so even
+  // bypassPermissions under an active sandbox is confined (never-ask, but scoped).
+  for (const mode of ["default", "acceptEdits", "auto", "bypassPermissions"] as const) {
+    test(`${mode} + sandbox on → :workspace profile`, () => {
+      expect(mirror(settings({ sandboxEnabled: true }), mode).profile!.base).toBe(":workspace");
     });
   }
 });
@@ -85,8 +89,8 @@ describe("mirror — approvalsReviewer (who adjudicates escalations)", () => {
 describe("mirror — network posture → profile.network.enabled", () => {
   const enabled = (s: Partial<EffectiveSettings>) => mirror(settings(s), "default").profile!.network!.enabled;
 
-  test("no Claude sandbox → network ON (mirrors Claude's own full network)", () => {
-    expect(enabled({})).toBe(true);
+  test("no Claude sandbox → no profile (danger-full-access; network open by nature)", () => {
+    expect(mirror(settings(), "default").profile).toBeUndefined();
   });
   test("under Claude's sandbox, no allowlist → network denied", () => {
     expect(enabled({ sandboxEnabled: true })).toBe(false);
@@ -127,15 +131,15 @@ describe("mirror — allow rules → execpolicy amendments", () => {
 });
 
 describe("mirror — profiles (the unified scope + network axis)", () => {
-  test("posture picks the base scope: plan→read-only, default→workspace, bypass→none", () => {
+  test("scope derives from sandbox: plan→read-only, sandbox-on→workspace, sandbox-off→none", () => {
     expect(profileFor(settings(), "plan")!.base).toBe(":read-only");
-    expect(profileFor(settings(), "default")!.base).toBe(":workspace");
-    expect(profileFor(settings(), "bypassPermissions")).toBeUndefined();
+    expect(profileFor(settings({ sandboxEnabled: true }), "default")!.base).toBe(":workspace");
+    expect(profileFor(settings(), "default")).toBeUndefined(); // sandbox off → danger
   });
 
   test("profile id is derived from the base scope", () => {
     expect(profileFor(settings(), "plan")!.id).toBe("dragoman-read-only");
-    expect(profileFor(settings(), "default")!.id).toBe("dragoman-workspace");
+    expect(profileFor(settings({ sandboxEnabled: true }), "default")!.id).toBe("dragoman-workspace");
   });
 
   test("network mirrors Claude: enabled when unsandboxed, domains from allow/deny + WebFetch", () => {
@@ -143,8 +147,8 @@ describe("mirror — profiles (the unified scope + network axis)", () => {
     expect(p!.network).toEqual({ enabled: true, domains: [["a.com", "allow"], ["c.com", "allow"], ["b.com", "deny"]] });
   });
 
-  test("no sandbox → network enabled, no domains", () => {
-    expect(profileFor(settings(), "default")!.network).toEqual({ enabled: true, domains: [] });
+  test("no sandbox → no profile (danger-full-access; network is open by nature)", () => {
+    expect(profileFor(settings(), "default")).toBeUndefined();
   });
 
   test("allProfiles yields one profile per extendable base, sharing the network rules", () => {
@@ -196,7 +200,7 @@ describe("filesystemFor — the four lists → filesystem access", () => {
   });
 
   test("profileFor carries the filesystem axis; allProfiles shares it across bases", () => {
-    const p = profileFor(settings({ denyRead: ["/s"] }), "default");
+    const p = profileFor(settings({ sandboxEnabled: true, denyRead: ["/s"] }), "default");
     expect(p!.filesystem!.paths).toEqual([["/s", "deny"]]);
     const ps = allProfiles(settings({ denyRead: ["/s"] }));
     expect(new Set(ps.map((x) => JSON.stringify(x.filesystem))).size).toBe(1);

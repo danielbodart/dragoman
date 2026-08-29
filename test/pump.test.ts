@@ -95,15 +95,15 @@ describe("codex_run / codex_status", () => {
     const { conn, runs } = bridge();
     await runs.start("do the thing", "/repo");
     const start = conn.requests.find((r) => r.method === "thread/start");
-    // Empty settings + no posture → mode "default" → on-request, workspace profile,
-    // cwd writable. The profile carries scope + network; sandbox enum is NOT sent.
+    // Empty settings + no posture → mode "default"; sandbox OFF → danger-full-access
+    // (no profile), on-request approval. Claude isn't sandboxing its bash, so neither
+    // do we — the scope axis is derived from the sandbox config, not the mode.
     expect(start?.params).toMatchObject({
       cwd: "/repo",
       approvalPolicy: "on-request",
-      permissions: "dragoman-workspace",
-      runtimeWorkspaceRoots: ["/repo"],
+      sandbox: "danger-full-access",
     });
-    expect((start?.params as { sandbox?: unknown }).sandbox).toBeUndefined();
+    expect((start?.params as { permissions?: unknown }).permissions).toBeUndefined();
   });
 
   test("an explicit posture overrides the static default", async () => {
@@ -115,7 +115,8 @@ describe("codex_run / codex_status", () => {
   });
 
   test("runtimeWorkspaceRoots carries cwd + additionalDirectories", async () => {
-    const settings = (): EffectiveSettings => ({ ...emptySettings(), additionalDirectories: ["/data", "/cache"] });
+    // Roots ride the profile path, which exists when Claude is sandboxing.
+    const settings = (): EffectiveSettings => ({ ...emptySettings(), sandboxEnabled: true, additionalDirectories: ["/data", "/cache"] });
     const { conn, runs } = bridge("t1", settings);
     await runs.start("go", "/repo");
     const start = conn.requests.find((r) => r.method === "thread/start");
