@@ -7,11 +7,11 @@
     {
       "name": "dragoman",
       "description": "Makes OpenAI Codex a native-feeling subagent inside Claude Code — approvals, progress, and permissions mapped onto Claude's own mechanisms.",
-      "version": "0.78.60",
+      "version": "0.80.61",
       "source": {
         "source": "archive",
-        "url": "https://github.com/danielbodart/dragoman/releases/download/v0.78.60/dragoman-plugin.zip",
-        "sha256": "cf637bec926653705727abcd8601ac9eadf84cb4e5b09ebbd10c01964fec96fb"
+        "url": "https://github.com/danielbodart/dragoman/releases/download/v0.80.61/dragoman-plugin.zip",
+        "sha256": "bced6735cb435441334406576cc13d0dd5e1c97aa499e9379ed4550155245f78"
       }
     }
   ]
