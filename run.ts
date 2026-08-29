@@ -88,7 +88,11 @@ export async function packagePlugin(out = "dist/dragoman-plugin.zip") {
   const manifest = JSON.parse(await Bun.file(".claude-plugin/plugin.json").text());
   manifest.version = v;
   await Bun.write(`${stage}/.claude-plugin/plugin.json`, JSON.stringify(manifest, null, 2) + "\n");
-  await $`cp .mcp.json ${`${stage}/.mcp.json`}`;
+  // The plugin's server config lives under packaging/, NOT at the repo root — a
+  // repo-root .mcp.json would make Claude Code auto-load (and fail, since
+  // CLAUDE_PLUGIN_ROOT is unset) the server for anyone working IN this repo.
+  // The archive is assembled here, so it lands at the archive root regardless.
+  await $`cp packaging/mcp.json ${`${stage}/.mcp.json`}`;
   await $`cp bin/dragoman ${`${stage}/bin/dragoman`}`;
   await $`cp -r skills agents commands ${stage}/`;
   await $`chmod -R u+rwX,go+rX ${stage}`;
