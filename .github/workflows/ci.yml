@@ -17,7 +17,7 @@ jobs:
   ci:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         # Full history: run.ts's version() derives the minor from the commit
         # count, which a shallow clone gets wrong (and the script refuses).
         # A token that can push is needed for the marketplace-pointer commit.
@@ -42,7 +42,7 @@ jobs:
 
       - name: Publish GitHub Release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: v${{ steps.facts.outputs.version }}
           name: v${{ steps.facts.outputs.version }}
