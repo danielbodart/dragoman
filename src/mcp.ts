@@ -15,6 +15,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { diagnostics } from "./diagnostics.ts";
+import { samplingProbe } from "./sampling-probe.ts";
 import type { ThreadRuns } from "./thread-run.ts";
 import { version } from "./version.ts";
 
@@ -43,6 +44,8 @@ export function buildServer(runs: ThreadRuns): Server {
         return text(await statusCodex(runs, args ?? {}));
       case "diagnostics":
         return text(diagnostics());
+      case "sampling_probe":
+        return text(await samplingProbe(server));
       default:
         return text(`unknown tool: ${name}`, true);
     }
@@ -107,6 +110,15 @@ const TOOLS = [
     // the mirroring transport is settled.
     name: "diagnostics",
     description: "Diagnostic: report Dragoman's runtime environment (working directory, Claude Code env vars, reachable settings files). Used to design settings mirroring.",
+    inputSchema: { type: "object", properties: {} },
+  },
+  {
+    // TEMPORARY: probe whether the MCP client (Claude Code) answers a
+    // server-issued sampling request — and whether `auto` mode can do so without
+    // a human. Linchpin for routing Codex approvals back to Claude's own model.
+    // Remove once the approval-routing design is settled.
+    name: "sampling_probe",
+    description: "Diagnostic: test whether this MCP client answers server-issued sampling (createMessage) requests, plain and tools-enabled. Used to design approval routing.",
     inputSchema: { type: "object", properties: {} },
   },
   {
