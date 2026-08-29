@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   ci:
@@ -19,7 +19,20 @@ jobs:
         with:
           fetch-depth: 0
       - uses: jdx/mise-action@v4
-      - run: bun install --frozen-lockfile
-      - run: bun run.ts check
-      - run: bun run.ts test
-      - run: bun run.ts build
+      - run: mise run check
+      - run: mise run test
+      - run: mise run build
+      - name: Derive release version
+        id: version
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: echo "version=$(bun run.ts version)" >> "$GITHUB_OUTPUT"
+      - name: Prepare release asset
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: cp dist/dragoman dist/dragoman-linux-x64
+      - name: Publish GitHub Release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.version.outputs.version }}
+          name: v${{ steps.version.outputs.version }}
+          files: dist/dragoman-linux-x64

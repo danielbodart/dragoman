@@ -57,4 +57,4 @@ the build roadmap. Nothing is shippable yet; this is the first commit.
 
 ## License
 
-TBD.
+Copyright 2026 Daniel Bodart. Licensed under the [Apache License 2.0](LICENSE).

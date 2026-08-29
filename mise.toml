@@ -1,2 +1,21 @@
 [tools]
 bun = "1.3"
+
+[tasks.install]
+run = "bun install --frozen-lockfile"
+
+[tasks.check]
+depends = ["install"]
+run = "bun run.ts check"
+
+[tasks.test]
+depends = ["install"]
+run = "bun run.ts test"
+
+[tasks.build]
+depends = ["check"]
+run = "bun run.ts build"
+
+[tasks.release]
+depends = ["check", "test", "build"]
+run = "bun run.ts build"
