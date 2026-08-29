@@ -228,10 +228,14 @@ app-server and reading the notification feed:
   becomes an `item/autoApprovalReview/*` event.
 - **`approvalsReviewer` is the human-vs-model switch** (under sandbox + granular):
   - `user` → routes the escape to the **client** (`item/commandExecution/requestApproval`
-    → our elicitation → the human). *(3/3 in one session; see the determinism
-    caveat in Open — one earlier run self-approved instead.)*
+    → our elicitation → the human). **Deterministic (7/7).**
   - `auto_review` → Codex's **internal agent review** self-adjudicates
     (`decisionSource: "agent"`), risk-scoring and approving authorized escapes.
+  - **unset ≠ explicit `user`.** Leaving the field off uses the internal agent
+    review (self-approves), NOT client routing — so in headless the effective
+    default is `auto_review`-like, despite the protocol doc's "defaults to `user`".
+    You must set `user` explicitly to reach the human. (An earlier "user self-
+    approved" result was this: an unset reviewer mislabeled as user.)
   - `guardian_subagent` → **no distinct behaviour at 0.150.1** — identical to
     `auto_review`. The whole guardian/auto-review API is `[UNSTABLE]` and
     `AutoReviewDecisionSource` has only the value `"agent"`, so no callback config
@@ -261,10 +265,6 @@ sandbox is what makes a review happen. Only the never-ask modes go
 
 ## Open
 
-- **`user`-routing determinism** — `granular + reviewer=user` routed to the client
-  3/3 in one session, but an earlier run self-approved via the agent instead. Pin
-  whether `user` reliably routes to the human (if not, `default` can't depend on
-  it), and whether prompt wording or some other config drives the difference.
 - **WebFetch cross-channel mapping** — decide and verify how a Claude WebFetch tool
   permission translates to Codex's sandboxed-exec network (allow, never fence).
 - **`CodexPolicy` type + compile/provision split** — the pure in-memory shape and
