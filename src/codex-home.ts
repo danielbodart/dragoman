@@ -16,7 +16,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { hasDefaultPermissions, renderManagedBlock, spliceManagedBlock, type ManagedProfile } from "./codex-config.ts";
+import { renderManagedBlock, spliceManagedBlock, withDefaultPermissions, type ManagedProfile } from "./codex-config.ts";
 
 export interface CodexHomeLayout {
   /** The real codex home to inherit auth + config from (default `$CODEX_HOME` ?? `~/.codex`). */
@@ -49,9 +49,10 @@ export function ensureCodexHome(profiles: readonly ManagedProfile[], layout: Cod
   linkFile(join(realHome, "auth.json"), join(isolatedHome, "auth.json"));
 
   const userConfig = readIfPresent(join(realHome, "config.toml"));
-  const defaultPermissions = hasDefaultPermissions(userConfig) ? undefined : ":workspace";
-  const block = renderManagedBlock(profiles, { defaultPermissions });
-  writeAtomic(join(isolatedHome, "config.toml"), spliceManagedBlock(userConfig, block));
+  const spliced = spliceManagedBlock(userConfig, renderManagedBlock(profiles));
+  // `:workspace` preserves Codex's normal posture; a user's own value is kept.
+  const config = withDefaultPermissions(spliced, ":workspace");
+  writeAtomic(join(isolatedHome, "config.toml"), config);
 
   return isolatedHome;
 }

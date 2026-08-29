@@ -31,28 +31,21 @@ export interface ManagedProfile {
   readonly domains: readonly (readonly [string, DomainAction])[];
 }
 
-export interface RenderOptions {
-  /**
-   * The `default_permissions` to emit. Codex requires it once ANY `[permissions]`
-   * profile exists; set it to preserve the user's normal (non-Dragoman) default —
-   * their existing value if they have one, else a built-in like `:workspace`.
-   * Omit to emit none (only safe when the user already sets it outside our block).
-   */
-  readonly defaultPermissions?: string;
-}
-
 /**
  * Render Dragoman's managed block: the network-proxy feature toggle (required for
  * domain rules to be enforced at all) and one `[permissions.<id>]` profile per
  * entry, each carrying its base and network domain rules. Pure.
+ *
+ * The block is ALL `[table]` sections — no bare root keys — so it is safe to
+ * append after arbitrary user content (a bare key after the user's last table
+ * would be absorbed into that table). `default_permissions`, the one root key
+ * Codex needs once a `[permissions]` profile exists, is handled by the caller as
+ * a prepend (see `codex-home`), not here.
  */
-export function renderManagedBlock(profiles: readonly ManagedProfile[], options: RenderOptions = {}): string {
+export function renderManagedBlock(profiles: readonly ManagedProfile[]): string {
   const lines: string[] = [BEGIN];
-  if (options.defaultPermissions !== undefined) {
-    lines.push(`default_permissions = ${tomlString(options.defaultPermissions)}`);
-  }
   // Domain rules are silently ignored unless the proxy is enabled.
-  lines.push("", "[features.network_proxy]", "enabled = true");
+  lines.push("[features.network_proxy]", "enabled = true");
   for (const profile of profiles) {
     lines.push("", `[permissions.${profile.id}]`, `extends = ${tomlString(profile.base)}`);
     lines.push(`[permissions.${profile.id}.network]`, "enabled = true");
@@ -98,6 +91,17 @@ export function stripManagedBlock(existing: string): string {
 /** Whether config text already sets a top-level `default_permissions` (outside our block). */
 export function hasDefaultPermissions(existing: string): boolean {
   return /^\s*default_permissions\s*=/m.test(stripManagedBlock(existing));
+}
+
+/**
+ * Ensure a root `default_permissions` is set, prepending one when the config has
+ * none. Codex requires it once any `[permissions]` profile exists; it is a bare
+ * root key, so it must lead the file (before any `[table]`) — hence prepend, not
+ * append. Respects a value the user already carries. Pure.
+ */
+export function withDefaultPermissions(config: string, value: string): string {
+  if (hasDefaultPermissions(config)) return config;
+  return `default_permissions = ${tomlString(value)}\n${config}`;
 }
 
 /** A double-quoted TOML basic string, escaping backslashes and quotes. */
