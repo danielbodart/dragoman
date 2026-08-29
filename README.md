@@ -13,23 +13,22 @@ languages** do business. That is exactly this tool's job.
 ## Why
 
 The official Codex plugin drives Codex well but interfaces with Claude like a batch
-job. Two things make it feel primitive:
+job. A few things make it feel primitive:
 
 - **Approvals don't work.** When Codex asks "may I run this command?", the plugin
   rejects the request outright, so it hangs — unless you disable the sandbox
   entirely (`danger-full-access`).
 - **Progress is invisible.** Claude sees one final blob, not what Codex is doing.
+- **Permissions and Mode** are not mapped, let alone fine grained sandbox rules
 
 Dragoman fixes both by talking to the Codex **app-server** — the one supported,
-actively-developed interface (`codex mcp-server` is
-[deprecated](https://github.com/openai/codex/issues/11816)) — and mapping its
-approval and progress flows onto Claude Code's own native mechanisms.
+actively-developed interface — and mapping its
+approval, mode, permissions and progress flows onto Claude Code's own native mechanisms.
 
 ## The idea in one line
 
-**Mirror Claude, don't reinvent it.** Dragoman reads Claude Code's own settings
-(sandbox scope, approval mode, permissions) and mirrors them onto Codex per turn.
-It only asks you a question when Claude's own policy can't answer — and when it
+**Mirror Claude, don't reinvent it.** Dragoman reads Claude Code's own settings and mirrors
+them onto Codex per turn. It only asks you a question when Claude's own policy can't answer — and when it
 does, it uses Claude's native approval prompt.
 
 ## Status
