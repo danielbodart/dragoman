@@ -60,8 +60,8 @@ Codex config.
 
 **Working.** The mappings above are implemented and verified — unit-tested and
 locked by live integration tests against real Codex. It installs as a native Claude
-Code **plugin** — a `/dragoman:codex` command, a `dragoman:codex` subagent, and a
-usage skill so Claude reaches for it naturally. Still to come: the fine-grained filesystem rules
+Code **plugin** — a `/dragoman:codex` skill and a `dragoman:codex-agent` subagent
+so Claude reaches for it naturally. Still to come: the fine-grained filesystem rules
 and model-answered approvals. See [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Install
@@ -79,8 +79,8 @@ runtime. Codex must be on your `PATH` (Dragoman spawns `codex app-server`).
 
 Once installed you get:
 
-- **`/dragoman:codex <task>`** — hand a task to Codex from the prompt.
-- the **`dragoman:codex` subagent** — Claude delegates to it for a second
+- **`/dragoman:codex`** — the skill Claude loads to hand a task to Codex from the prompt.
+- the **`dragoman:codex-agent` subagent** — Claude delegates to it for a second
   implementation, an independent review, or a deep investigation; it drives the
   run, follows the heartbeat, and reports back in Codex's voice.
 - the underlying **`codex_run` / `codex_status`** MCP tools (exposed as

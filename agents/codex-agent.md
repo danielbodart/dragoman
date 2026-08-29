@@ -1,5 +1,5 @@
 ---
-name: codex
+name: codex-agent
 description: >-
   Drives OpenAI Codex as a background peer agent through the Dragoman bridge.
   Use PROACTIVELY when the user wants Codex to do something — "ask Codex to…",

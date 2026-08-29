@@ -34,8 +34,8 @@ the prompt.
 
 ## The two ways to drive it
 
-**Prefer the `codex` subagent** for any substantial hand-off (`/codex`, or spawn
-the `codex` agent). It runs the start→poll→narrate loop in its own context, so the
+**Prefer the `codex-agent` subagent** for any substantial hand-off (spawn it via
+`subagent_type: "dragoman:codex-agent"`). It runs the start→poll→narrate loop in its own context, so the
 back-and-forth of following a long run never floods this conversation — you get the
 result back, clean.
 

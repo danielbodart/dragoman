@@ -94,7 +94,7 @@ export async function packagePlugin(out = "dist/dragoman-plugin.zip") {
   // The archive is assembled here, so it lands at the archive root regardless.
   await $`cp packaging/mcp.json ${`${stage}/.mcp.json`}`;
   await $`cp bin/dragoman ${`${stage}/bin/dragoman`}`;
-  await $`cp -r skills agents commands ${stage}/`;
+  await $`cp -r skills agents ${stage}/`;
   await $`chmod -R u+rwX,go+rX ${stage}`;
 
   await $`rm -f ${out}`;
