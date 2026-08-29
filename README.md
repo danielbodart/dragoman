@@ -84,7 +84,7 @@ Once installed you get:
   implementation, an independent review, or a deep investigation; it drives the
   run, follows the heartbeat, and reports back in Codex's voice.
 - the underlying **`codex_run` / `codex_status`** MCP tools (exposed as
-  `mcp__dragoman__…`), if you'd rather drive Codex directly.
+  `mcp__plugin_dragoman_dragoman__…`), if you'd rather drive Codex directly.
 
 ### From source
 

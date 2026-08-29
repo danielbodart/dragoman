@@ -88,10 +88,13 @@ const TOOLS = [
           type: "string",
           enum: ["plan", "default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"],
           description:
-            "Optional: the current Claude Code permission posture, so Codex is run to match it. " +
-            "Pass the mode you are operating under (e.g. 'plan' for read-only planning, " +
-            "'bypassPermissions' when the user has waved you through). If omitted, Dragoman " +
-            "mirrors the static defaultMode from Claude's settings.",
+            "OPTIONAL — normally OMIT this. When omitted, Dragoman automatically mirrors " +
+            "Claude's own live permission posture onto Codex, so Codex gets exactly the same " +
+            "access you have. That auto-mirroring is the whole point; passing a value OVERRIDES " +
+            "it with a fixed mode and will usually make Codex more restricted (or more permissive) " +
+            "than Claude actually is. Only pass a value when the user explicitly asks Codex to run " +
+            "in a specific mode (e.g. 'run Codex read-only' → 'plan'). Do NOT set it just because " +
+            "you think you know your current mode — leave it unset and let Dragoman read the real one.",
         },
       },
       required: ["prompt", "cwd"],

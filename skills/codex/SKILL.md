@@ -41,7 +41,8 @@ result back, clean.
 
 Use the **tools directly** for a quick one-off you want to watch inline:
 
-1. **Start** — `codex_run({ prompt, cwd, posture })` returns a handle immediately.
+1. **Start** — `codex_run({ prompt, cwd })` returns a handle immediately (omit
+   `posture` — see below).
    The run proceeds in the background.
 2. **Follow** — poll `codex_status({ handle })` in a loop. Each call long-polls
    (blocks until Codex advances, up to ~100s) and returns a one-line heartbeat:
@@ -60,10 +61,16 @@ paths involved, what "done" looks like, and any constraints. Treat it like brief
 a capable engineer who just walked in. `cwd` must be the **absolute path** to the
 working directory for the task.
 
-## Posture — match Codex to how you're operating
+## Posture — leave it to Dragoman
 
-Pass `posture` = your current Claude Code permission mode so Codex runs with the
-matching sandbox and approval policy:
+**Normally don't pass `posture` at all.** When you omit it, Dragoman reads Claude's
+*live* permission posture and mirrors it onto Codex, so Codex runs with exactly the
+access you have. That auto-mirroring is the whole point — don't second-guess it by
+passing a mode you *think* matches your session; you'll usually get it wrong and
+leave Codex more restricted (or more permissive) than Claude actually is.
+
+Only pass `posture` when the **user explicitly** asks Codex to run in a particular
+mode. What each override means, if you do:
 
 | posture | Codex runs… |
 |---|---|
@@ -72,10 +79,10 @@ matching sandbox and approval policy:
 | `acceptEdits` | edits the workspace freely, asks for the rest |
 | `auto` | acts in the workspace, asks before leaving it |
 | `dontAsk` | proceeds without pausing to ask, still sandboxed |
-| `bypassPermissions` | full access — only when the user has waved you through |
+| `bypassPermissions` | full access |
 
-Omit `posture` to inherit the static default from the user's Claude settings. For a
-**review or investigation** that must not touch files, use `plan`.
+The commonest legitimate override is a user asking for a **read-only** review →
+`plan`.
 
 ## After the run
 
