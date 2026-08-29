@@ -43,6 +43,12 @@ export interface ManagedProfile {
  * a prepend (see `codex-home`), not here.
  */
 export function renderManagedBlock(profiles: readonly ManagedProfile[]): string {
+  // No profiles ⇒ nothing to manage: emit NO block, so the network proxy is not
+  // switched on when there are no domain rules to enforce. That keeps the escape
+  // hatch (no proxy machinery in the path unless it's doing a job) and leaves the
+  // user's config behaviour unchanged.
+  if (profiles.length === 0) return "";
+
   const lines: string[] = [BEGIN];
   // Domain rules are silently ignored unless the proxy is enabled.
   lines.push("[features.network_proxy]", "enabled = true");
@@ -67,6 +73,7 @@ export function renderManagedBlock(profiles: readonly ManagedProfile[]): string 
  */
 export function spliceManagedBlock(existing: string, block: string): string {
   const stripped = stripManagedBlock(existing);
+  if (block.trim() === "") return stripped; // nothing to add: just drop any prior block
   if (stripped.trim() === "") return block + "\n";
   return `${stripped.replace(/\n+$/, "")}\n\n${block}\n`;
 }

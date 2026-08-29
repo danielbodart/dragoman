@@ -72,6 +72,17 @@ describe("ensureCodexHome", () => {
     expect(config).not.toContain('"example.org" = "deny"');
   });
 
+  test("no profiles ⇒ config is the user's verbatim, with no proxy or default_permissions", () => {
+    ensureCodexHome([], { realHome, isolatedHome });
+    const config = readFileSync(join(isolatedHome, "config.toml"), "utf8");
+    expect(config).toContain('approval_policy = "on-request"');
+    expect(config).not.toContain("network_proxy");
+    expect(config).not.toContain("DRAGOMAN MANAGED");
+    expect(config).not.toContain("default_permissions");
+    // auth is still linked so an unrestricted session works out of the isolated home
+    expect(lstatSync(join(isolatedHome, "auth.json")).isSymbolicLink()).toBe(true);
+  });
+
   test("works when the real home has no config.toml yet", () => {
     rmSync(join(realHome, "config.toml"));
     ensureCodexHome(profiles, { realHome, isolatedHome });

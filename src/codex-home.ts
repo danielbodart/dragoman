@@ -50,8 +50,10 @@ export function ensureCodexHome(profiles: readonly ManagedProfile[], layout: Cod
 
   const userConfig = readIfPresent(join(realHome, "config.toml"));
   const spliced = spliceManagedBlock(userConfig, renderManagedBlock(profiles));
-  // `:workspace` preserves Codex's normal posture; a user's own value is kept.
-  const config = withDefaultPermissions(spliced, ":workspace");
+  // default_permissions is only needed (and only valid) once a [permissions]
+  // profile exists — i.e. when there are domain rules. `:workspace` preserves
+  // Codex's normal posture; a user's own value is kept.
+  const config = profiles.length > 0 ? withDefaultPermissions(spliced, ":workspace") : spliced;
   writeAtomic(join(isolatedHome, "config.toml"), config);
 
   return isolatedHome;

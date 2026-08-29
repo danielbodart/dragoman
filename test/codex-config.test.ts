@@ -23,6 +23,10 @@ describe("renderManagedBlock", () => {
     expect(block).toContain('[permissions.dragoman-workspace.network.domains]\n"example.com" = "allow"\n"example.org" = "deny"');
   });
 
+  test("no profiles ⇒ empty string (no block, no proxy switched on)", () => {
+    expect(renderManagedBlock([])).toBe("");
+  });
+
   test("a profile with no domains still enables its network but writes no domains table", () => {
     const block = renderManagedBlock([{ id: "dragoman-plan", base: ":read-only", domains: [] }]);
     expect(block).toContain("[permissions.dragoman-plan.network]\nenabled = true");
