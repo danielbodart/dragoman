@@ -278,3 +278,61 @@ describe("the approval bridge — the anti-hang property", () => {
     expect(runs.status(threadId)?.result).toBe("all done");
   });
 });
+
+describe("long-poll (waitForUpdate) — event-driven status", () => {
+  test("wakes the instant the run changes, not on a timer", async () => {
+    const { conn, runs, threadId } = bridge();
+    await runs.start("do it", "/repo");
+    const since = runs.revision(threadId);
+
+    // Park on a LONG timeout, then complete the turn — the wake must come from
+    // the completion, well before the timeout would fire.
+    const poll = runs.waitForUpdate(threadId, since, 60_000);
+    const started = Date.now();
+    conn.emit(turnCompleted(threadId, "all done"));
+    const { snapshot, revision } = await poll;
+
+    expect(snapshot?.status).toBe("done");
+    expect(revision).toBeGreaterThan(since);
+    expect(Date.now() - started).toBeLessThan(1_000); // woke on the event, not the 60s cap
+  });
+
+  test("wakes on a heartbeat beat, carrying the latest one", async () => {
+    const { conn, runs, threadId } = bridge();
+    await runs.start("do it", "/repo");
+    const since = runs.revision(threadId);
+
+    const poll = runs.waitForUpdate(threadId, since, 60_000);
+    conn.emit({
+      emittedAtMs: 1600,
+      method: "item/started",
+      params: { item: { type: "commandExecution", id: "c1", pluginId: null, scriptPath: null, command: "ls", cwd: "/repo", processId: null, source: "agent", status: "inProgress", commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null } as ThreadItem, threadId, turnId: "turn1", startedAtMs: 1600 },
+    });
+    const { snapshot } = await poll;
+    expect(snapshot?.latestBeat?.text).toBe("running: ls");
+  });
+
+  test("returns immediately when the run is already terminal", async () => {
+    const { conn, runs, threadId } = bridge();
+    await runs.start("do it", "/repo");
+    conn.emit(turnCompleted(threadId, "done"));
+    await Bun.sleep(1);
+
+    // Even with a `since` far ahead, a terminal run short-circuits — no waiting.
+    const started = Date.now();
+    const { snapshot } = await runs.waitForUpdate(threadId, 9_999, 60_000);
+    expect(snapshot?.status).toBe("done");
+    expect(Date.now() - started).toBeLessThan(1_000);
+  });
+
+  test("returns after the timeout when nothing changes", async () => {
+    const { runs, threadId } = bridge();
+    await runs.start("do it", "/repo");
+    const since = runs.revision(threadId);
+
+    const started = Date.now();
+    const { revision } = await runs.waitForUpdate(threadId, since, 40);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(30);
+    expect(revision).toBe(since); // nothing advanced it
+  });
+});

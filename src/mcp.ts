@@ -40,7 +40,7 @@ export function buildServer(runs: ThreadRuns): Server {
       case "codex_run":
         return text(await runCodex(runs, args ?? {}));
       case "codex_status":
-        return text(statusCodex(runs, args ?? {}));
+        return text(await statusCodex(runs, args ?? {}));
       case "dragoman_diagnostics":
         return text(diagnostics());
       default:
@@ -122,9 +122,22 @@ async function runCodex(runs: ThreadRuns, args: Record<string, unknown>): Promis
   return `Started Codex task. Poll codex_status with handle "${handle}".`;
 }
 
-function statusCodex(runs: ThreadRuns, args: Record<string, unknown>): string {
+/** How long a single codex_status call blocks waiting for progress, before it
+ * returns "still running" so the caller can poll again — kept under Claude Code's
+ * ~120s tool-call ceiling. */
+const STATUS_LONGPOLL_MS = 100_000;
+
+async function statusCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<string> {
   const handle = String(args.handle ?? "");
-  const run = runs.status(handle);
+  if (!runs.status(handle)) return `No Codex task with handle "${handle}".`;
+
+  // Long-poll: block until the run advances past its current revision (or is
+  // already terminal), so this returns the instant Codex makes progress rather
+  // than on a fixed interval. Times out to a "still running" line the caller
+  // re-polls, staying under the tool-call ceiling.
+  const since = runs.revision(handle);
+  const { snapshot } = await runs.waitForUpdate(handle, since, STATUS_LONGPOLL_MS);
+  const run = snapshot ?? runs.status(handle);
   if (!run) return `No Codex task with handle "${handle}".`;
 
   const beat = run.latestBeat ? ` — ${run.latestBeat.text}` : "";

@@ -101,7 +101,10 @@ async function handleCommandApproval(
     return { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: amendment } } };
   }
 
-  if (run) run.status = "waiting-approval";
+  if (run) {
+    run.status = "waiting-approval";
+    runs.bump(params.threadId); // wake a long-poll: a decision is now pending
+  }
 
   const decisions = availableDecisions(params);
   const decision = await elicitation.ask({ prompt: promptFor(params), decisions });
@@ -261,8 +264,12 @@ function apply(notification: Notification, runs: ThreadRuns): void {
   const run = runFor(notification, runs);
   if (!run) return;
 
+  let changed = false;
   const beat = beatOf(notification);
-  if (beat) run.latestBeat = beat;
+  if (beat) {
+    run.latestBeat = beat;
+    changed = true;
+  }
 
   if (notification.method === "turn/completed") {
     const turn = notification.params.turn;
@@ -273,10 +280,15 @@ function apply(notification: Notification, runs: ThreadRuns): void {
       run.status = "done";
       run.result = lastAgentMessage(turn) ?? run.result;
     }
+    changed = true;
   } else if (notification.method === "error") {
     run.status = "error";
     run.error = notification.params.error.message;
+    changed = true;
   }
+
+  // Wake any long-poll waiting on this run — the write itself is the signal.
+  if (changed) runs.bump(run.handle);
 }
 
 /**
