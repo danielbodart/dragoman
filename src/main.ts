@@ -113,10 +113,15 @@ export async function main(argv: readonly string[]): Promise<number> {
   const server = buildServer(runs);
   const elicitation = new McpElicitationChannel(server);
 
+  // Clean up AND exit on a termination signal. Registering a handler overrides
+  // the default (terminate), so without the explicit exit the process would
+  // survive the SIGTERM Claude Code sends when it stops/reconnects the server —
+  // which is exactly how stray `dragoman serve` processes accumulated.
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
       controller.abort();
       conn?.close();
+      process.exit(0);
     });
   }
 

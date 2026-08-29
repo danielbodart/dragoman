@@ -64,6 +64,10 @@ export async function serve(server: Server): Promise<void> {
   const transport = new StdioServerTransport();
   const closed = new Promise<void>((resolve) => {
     transport.onclose = () => resolve();
+    // Belt-and-braces: if Claude Code closes the pipe (stdin EOF) rather than
+    // signalling, end the server too so main() can tear down and the process exit.
+    process.stdin.on("close", resolve);
+    process.stdin.on("end", resolve);
   });
   await server.connect(transport);
   await closed;
