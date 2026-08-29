@@ -6,7 +6,7 @@ A Claude Code plugin that translates between Claude and Codex so that Codex feel
 Dragoman translates between them — so Codex's approvals, progress, and permissions feel 
 like they were built into Claude all along.
 
-> A _dragoman_ was the **interpreter-diplomat* who let two courts speaking **different
+> A _dragoman_ was the **interpreter-diplomat** who let two courts speaking **different
 languages** do business. That is exactly this tool's job.
 
 
