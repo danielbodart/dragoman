@@ -252,16 +252,25 @@ describe("the approval bridge — the anti-hang property", () => {
     expect(runs.status(threadId)?.status).toBe("running");
   });
 
-  test("a file-change approval replies with a valid FileChangeApprovalDecision decline", async () => {
-    const { conn, runs } = bridge();
+  test("a file-change approval is elicited to the human, then replies with the decision", async () => {
+    const { conn, elicitation, runs, threadId } = bridge();
     await runs.start("do the thing", "/repo"); // wires the pump (connects lazily)
     const fileChange: ServerRequest = {
       method: "item/fileChange/requestApproval",
       id: 2,
-      params: { threadId: "t1", turnId: "turn1", itemId: "f1" } as never,
+      params: { threadId, turnId: "turn1", itemId: "f1", reason: "write outside workspace" } as never,
     };
-    // "decline" IS a valid FileChangeApprovalDecision, so a plain decision reply is correct here.
-    expect(await conn.emitServerRequest(fileChange)).toEqual({ decision: "decline" });
+    // Fire but don't await — it settles only once the human answers.
+    const replyPromise = conn.emitServerRequest(fileChange);
+    await Bun.sleep(1);
+    expect(elicitation.waiting).toBe(true);
+    expect(elicitation.asks[0]?.prompt).toContain("write files");
+    expect(elicitation.asks[0]?.decisions).toEqual(["accept", "acceptForSession", "decline", "cancel"]);
+    expect(runs.status(threadId)?.status).toBe("waiting-approval");
+
+    elicitation.answer("decline");
+    expect(await replyPromise).toEqual({ decision: "decline" }); // a valid FileChangeApprovalDecision
+    expect(runs.status(threadId)?.status).toBe("running");
   });
 
   test("currentTime/read is answered with the real time, not an approval decision", async () => {

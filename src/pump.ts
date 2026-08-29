@@ -25,6 +25,7 @@ import type { ElicitationChannel } from "./elicitation.ts";
 import type { RunRecord } from "./model.ts";
 import type { ThreadRuns } from "./thread-run.ts";
 import type { CommandExecutionRequestApprovalParams } from "../generated/codex-protocol/ts/v2/CommandExecutionRequestApprovalParams.ts";
+import type { FileChangeRequestApprovalParams } from "../generated/codex-protocol/ts/v2/FileChangeRequestApprovalParams.ts";
 
 /**
  * Wire the pump onto a connection: register the approval handler and start the
@@ -72,9 +73,7 @@ async function handleServerRequest(
     case "item/commandExecution/requestApproval":
       return handleCommandApproval(request.params, runs, elicitation);
     case "item/fileChange/requestApproval":
-      // A real, correctly-typed decline (FileChangeApprovalDecision). Surfacing
-      // this as an elicitation too is the natural next step.
-      return { decision: "decline" };
+      return handleFileChangeApproval(request.params, runs, elicitation);
     case "currentTime/read":
       return { currentTimeAt: Math.floor(Date.now() / 1000) };
     default:
@@ -114,6 +113,34 @@ async function handleCommandApproval(
   // notification will refine this (running again, or done).
   if (run && run.status === "waiting-approval") run.status = "running";
 
+  return { decision };
+}
+
+/**
+ * File-change approval: route through the human, mirroring the command path.
+ *
+ * Codex raises this when a write escapes its sandbox (e.g. under a judged mode's
+ * `granular` policy with reviewer `user`). There are no allow/deny *command*
+ * prefixes to pre-answer here — a file change is not a shell command — so it goes
+ * straight to the elicitation. The reply is a `FileChangeApprovalDecision`.
+ */
+async function handleFileChangeApproval(
+  params: FileChangeRequestApprovalParams,
+  runs: ThreadRuns,
+  elicitation: ElicitationChannel,
+): Promise<unknown> {
+  const run = runs.record(params.threadId);
+  if (run) {
+    run.status = "waiting-approval";
+    runs.bump(params.threadId);
+  }
+  const where = params.grantRoot ? ` under \`${params.grantRoot}\`` : "";
+  const reason = params.reason ? ` — ${params.reason}` : "";
+  const decision = await elicitation.ask({
+    prompt: `Codex wants to write files${where}${reason}`,
+    decisions: ["accept", "acceptForSession", "decline", "cancel"],
+  });
+  if (run && run.status === "waiting-approval") run.status = "running";
   return { decision };
 }
 
