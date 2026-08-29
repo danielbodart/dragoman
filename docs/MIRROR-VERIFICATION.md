@@ -91,7 +91,7 @@ decision). That harness is deferred to avoid burning model tokens on every run.
 
 | Claude setting | Codex target | Status | Note |
 |---|---|---|---|
-| `permissions.deny` Bash rules | pre-decline in approval handler | 🚧 | clean, typed, testable — next to build |
+| `permissions.deny` Bash rules | pre-decline in approval handler | ✅ built | unit-tested (`mirror.test.ts` deny prefixes, `pump.test.ts` pre-decline incl. wrapped/chained/env-prefixed fail-closed cases + deny-wins-over-allow); live-fire needs the harness |
 | `sandbox.network.allowedDomains`/`deniedDomains` (specific hosts) | `NetworkPolicyAmendment{host,action}` / thread `config` | 🚧 | only the coarse bool is mapped today; host lists need the freeform config surface |
 | `sandbox.filesystem.allowRead/denyRead/allowWrite/denyWrite` | `AdditionalFileSystemPermissions` via named permissions profile | 🚧 | not in the typed RPC struct; PLAN §10.4 "later lever" |
 

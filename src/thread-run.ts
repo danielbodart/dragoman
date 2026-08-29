@@ -85,6 +85,7 @@ export class ThreadRuns {
       handle,
       status: "starting",
       execpolicyAmendments: policy.execpolicyAmendments,
+      denyPrefixes: policy.denyPrefixes,
     });
 
     // Kick the turn off; do NOT await its completion. The pump drives it from

@@ -42,6 +42,8 @@ export interface RunRecord {
   readonly handle: RunHandle;
   /** Command token prefixes Claude would allow without prompting. */
   readonly execpolicyAmendments?: readonly (readonly string[])[];
+  /** Command token prefixes Claude would deny — pre-declined without prompting. */
+  readonly denyPrefixes?: readonly (readonly string[])[];
   status: RunStatus;
   latestBeat?: Beat;
   /** The final assistant message / turn result, once `status` is "done". */

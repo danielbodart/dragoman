@@ -89,6 +89,12 @@ async function handleCommandApproval(
   elicitation: ElicitationChannel,
 ): Promise<unknown> {
   const run = runs.record(params.threadId);
+
+  // Deny wins over allow (Claude's own precedence). Fail closed: a denied
+  // prefix blocks even when hidden in a shell wrapper or chained after another
+  // command, so it is matched against every segment, not just a lone command.
+  if (isDenied(params, run?.denyPrefixes ?? [])) return { decision: "decline" };
+
   const amendment = matchesPrefix(params, run?.execpolicyAmendments ?? []);
   if (amendment) {
     if (run?.status === "waiting-approval") run.status = "running";
@@ -159,6 +165,52 @@ function simpleCommandTokens(source: string): readonly string[] | undefined {
 /** True when `tokens` starts with every non-empty `prefix` token in order. */
 function isTokenPrefix(prefix: readonly string[], tokens: readonly string[]): boolean {
   return prefix.length > 0 && prefix.every((token, index) => tokens[index] === token);
+}
+
+/**
+ * True when any segment of the command begins with a denied prefix.
+ *
+ * The inverse conservatism of the allow path: allow matches only a lone simple
+ * command (§`simpleCommandTokens`), but deny is fail-closed — it must still fire
+ * when a denied command is wrapped in a shell (`bash -lc '...'`), chained after
+ * another (`ok && curl evil`), or preceded by inline env assignments
+ * (`FOO=1 curl evil`). So every operator-separated segment is checked, after
+ * stripping leading `NAME=value` tokens. This mirrors Claude's `deny` as a
+ * policy convenience, not as the containment boundary — the sandbox is that; a
+ * command that slips this match still faces the mirrored sandbox and, failing
+ * that, the normal human prompt (a missed deny falls through, never auto-runs).
+ */
+function isDenied(
+  params: CommandExecutionRequestApprovalParams,
+  denyPrefixes: readonly (readonly string[])[],
+): boolean {
+  if (denyPrefixes.length === 0) return false;
+  for (const segment of commandSegments(params)) {
+    const command = stripLeadingAssignments(segment);
+    for (const prefix of denyPrefixes) {
+      if (isTokenPrefix(prefix, command)) return true;
+    }
+  }
+  return false;
+}
+
+/** Every operator-separated command segment, unwrapping a shell wrapper first. */
+function commandSegments(params: CommandExecutionRequestApprovalParams): readonly (readonly string[])[] {
+  const command = params.command?.trim();
+  if (!command) return [];
+  const script = unwrapShellScript(command) ?? command;
+  return script
+    .split(/&&|\|\||;|\||&|\n/)
+    .map((segment) => segment.trim())
+    .filter((segment) => segment.length > 0)
+    .map((segment) => segment.split(/\s+/));
+}
+
+/** Drop leading `NAME=value` environment assignments so the real command leads. */
+function stripLeadingAssignments(tokens: readonly string[]): readonly string[] {
+  let index = 0;
+  while (index < tokens.length && /^[A-Za-z_]\w*=/.test(tokens[index]!)) index += 1;
+  return tokens.slice(index);
 }
 
 /** Extract the script argument from the common non-interactive shell wrappers. */

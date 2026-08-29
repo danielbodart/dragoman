@@ -37,6 +37,8 @@ export interface CodexPolicy {
   readonly sandboxPolicy: SandboxPolicy;
   /** execpolicy prefix allows, from Claude's `allow` Bash rules. */
   readonly execpolicyAmendments: readonly ExecPolicyAmendment[];
+  /** Command token prefixes from Claude's `deny` Bash rules — pre-declined. */
+  readonly denyPrefixes: readonly (readonly string[])[];
 }
 
 /** The safe default when no mode is known (PLAN §10.2 tier 3): ask, read-only. */
@@ -53,8 +55,9 @@ export function mirror(settings: EffectiveSettings, mode: ClaudeMode, cwd: strin
   const approvalPolicy = approvalFor(mode);
   const sandbox = sandboxModeFor(mode, settings);
   const sandboxPolicy = sandboxPolicyFor(sandbox, settings, cwd);
-  const execpolicyAmendments = execpolicyFor(settings.allow);
-  return { approvalPolicy, sandbox, sandboxPolicy, execpolicyAmendments };
+  const execpolicyAmendments = bashPrefixes(settings.allow);
+  const denyPrefixes = bashPrefixes(settings.deny);
+  return { approvalPolicy, sandbox, sandboxPolicy, execpolicyAmendments, denyPrefixes };
 }
 
 /**
@@ -140,20 +143,23 @@ function networkEnabled(settings: EffectiveSettings): boolean {
 }
 
 /**
- * Claude `allow` Bash rules → Codex execpolicy prefix-allow amendments.
+ * Claude `allow`/`deny` Bash rules → command token prefixes.
  *
- * `Bash(npm run test:*)` → the token prefix `["npm","run","test"]`, added as an
- * execpolicy `prefix_rule(decision="allow")` so matching commands skip the
- * prompt — the same commands Claude would auto-allow. Only `Bash(...)` rules
- * translate; `Read`/`Edit`/`WebFetch`/`mcp__…` rules are for other surfaces.
+ * `Bash(npm run test:*)` → the token prefix `["npm","run","test"]`. From `allow`
+ * these become execpolicy `prefix_rule(decision="allow")` amendments so matching
+ * commands skip the prompt; from `deny` they are pre-declined in the approval
+ * handler — the same commands Claude would auto-allow / block. Only `Bash(...)`
+ * rules translate; `Read`/`Edit`/`WebFetch`/`mcp__…` rules are for other
+ * surfaces. A bare `Bash` (no prefix) is dropped rather than becoming a
+ * match-everything rule.
  */
-function execpolicyFor(allow: readonly string[]): ExecPolicyAmendment[] {
-  const amendments: ExecPolicyAmendment[] = [];
-  for (const rule of allow) {
+function bashPrefixes(rules: readonly string[]): string[][] {
+  const prefixes: string[][] = [];
+  for (const rule of rules) {
     const prefix = bashPrefix(rule);
-    if (prefix.length > 0) amendments.push(prefix);
+    if (prefix.length > 0) prefixes.push(prefix);
   }
-  return amendments;
+  return prefixes;
 }
 
 /**

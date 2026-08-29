@@ -103,3 +103,15 @@ describe("mirror — allow rules → execpolicy amendments", () => {
     expect(p.execpolicyAmendments).toEqual([["git", "status"], ["ls", "-la"]]);
   });
 });
+
+describe("mirror — deny rules → deny prefixes", () => {
+  test("a Bash deny rule becomes a command-token prefix", () => {
+    const p = mirror(settings({ deny: ["Bash(curl:*)", "Bash(git push:*)"] }), "default", "/repo");
+    expect(p.denyPrefixes).toEqual([["curl"], ["git", "push"]]);
+  });
+
+  test("non-Bash and bare-Bash deny rules are ignored", () => {
+    const p = mirror(settings({ deny: ["Read(/etc/**)", "Bash"] }), "default", "/repo");
+    expect(p.denyPrefixes).toEqual([]);
+  });
+});

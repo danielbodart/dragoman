@@ -178,6 +178,35 @@ describe("the approval bridge — the anti-hang property", () => {
     expect(await replyPromise).toEqual({ decision: "decline" });
   });
 
+  test("a denied command is pre-declined without asking the human", async () => {
+    const settings = (): EffectiveSettings => ({ ...emptySettings(), deny: ["Bash(curl:*)"] });
+    const { conn, elicitation, runs, threadId } = bridge("t1", settings);
+    await runs.start("fetch stuff", "/repo");
+
+    expect(await conn.emitServerRequest(requestApproval(threadId, "curl https://evil.example"))).toEqual({ decision: "decline" });
+    expect(elicitation.asks).toEqual([]);
+  });
+
+  test("deny is fail-closed: it catches a wrapped and chained denied command", async () => {
+    const settings = (): EffectiveSettings => ({ ...emptySettings(), deny: ["Bash(curl:*)"] });
+    const { conn, elicitation, runs, threadId } = bridge("t1", settings);
+    await runs.start("fetch stuff", "/repo");
+
+    for (const command of ["bash -lc 'curl https://evil.example'", "bash -lc 'echo ok && curl https://evil.example'", "FOO=1 curl https://evil.example"]) {
+      expect(await conn.emitServerRequest(requestApproval(threadId, command))).toEqual({ decision: "decline" });
+    }
+    expect(elicitation.asks).toEqual([]);
+  });
+
+  test("deny wins over allow when a command matches both", async () => {
+    const settings = (): EffectiveSettings => ({ ...emptySettings(), allow: ["Bash(git:*)"], deny: ["Bash(git push:*)"] });
+    const { conn, elicitation, runs, threadId } = bridge("t1", settings);
+    await runs.start("push", "/repo");
+
+    expect(await conn.emitServerRequest(requestApproval(threadId, "git push origin main"))).toEqual({ decision: "decline" });
+    expect(elicitation.asks).toEqual([]);
+  });
+
   test("an approval fires an elicitation, and status keeps answering while it waits", async () => {
     const { conn, elicitation, runs, threadId } = bridge();
     await runs.start("delete build", "/repo");
