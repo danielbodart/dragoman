@@ -58,6 +58,19 @@ describe("mirror — mode → approval + sandbox", () => {
     expect(p.approvalPolicy).toBe("never");
     expect(p.sandbox).toBe("workspace-write");
   });
+
+  // manual/acceptEdits/auto all share default's posture: on-request +
+  // workspace-write. (auto ↔ on-request is the intended pairing — both delegate
+  // the accept/decline call to a model, Codex's autoApprovalReview; see
+  // docs/MIRROR-VERIFICATION.md.)
+  for (const mode of ["manual", "acceptEdits", "auto"] as const) {
+    test(`${mode} → on-request + workspace-write (same as default)`, () => {
+      const p = mirror(settings(), mode, "/repo");
+      expect(p.approvalPolicy).toBe("on-request");
+      expect(p.sandbox).toBe("workspace-write");
+      expect(p.sandboxPolicy).toMatchObject({ type: "workspaceWrite", writableRoots: ["/repo"], networkAccess: false });
+    });
+  }
 });
 
 describe("mirror — sandbox settings → SandboxPolicy", () => {

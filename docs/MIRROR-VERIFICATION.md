@@ -77,6 +77,17 @@ decision). That harness is deferred to avoid burning model tokens on every run.
 | A2 | `dontAsk` | never + workspace-write | write `./probe-a2-in.txt` (cwd) **and** `~/.dragoman-probe-a2-out.txt` (outside); report both | in-cwd **succeeds**; outside **fails**, no prompt | in-cwd wrote; outside rejected — *"writing outside of the project; rejected by user approval settings"*, file absent | ✅ |
 | A3 | `plan` | untrusted + read-only | write under a read-only policy | write blocked | `sandbox.integration.test.ts` — read-only blocks writes (exit ≠ 0), allows reads | ✅ test |
 | A4 | `default` | on-request + workspace-write | write outside cwd (`~/.dragoman-probe-a4.txt`) | **approval fires**, then (if granted) write succeeds | outside write **succeeded** where the identical write under `never` (A2) was **rejected** — success is reachable only via a granted approval, so on-request **did** fire an approval (auto-answered by the headless probe) | ✅ by contrast |
+| A5 | `manual` / `acceptEdits` / `auto` | on-request + workspace-write (identical to `default`) | mapping only | same Codex policy as `default` — the difference is left to Codex | `mirror.test.ts` asserts each → on-request + workspace-write | ✅ unit |
+
+**On `auto`:** it maps to `on-request` deliberately, not incidentally. Claude
+`auto` mode delegates the accept/decline call to a *model*; Codex `on-request`
+delegates it to a *model* too (its internal `item/autoApprovalReview`). The job
+is only to ensure both use a model for that judgment — not to make Codex's model
+reach the same verdict as Claude's. Note the proven consequence (see the key
+finding): under `on-request` Codex's review is a **closed loop** — it never
+round-trips to the Dragoman client (verified even for `sudo`), so in these modes
+the human is not prompted; Codex's own review plus the sandbox are the guard. The
+elicitation bridge is reached only under `plan`/`untrusted`.
 
 ### B. Sandbox scope (`sandboxModeFor` / `sandboxPolicyFor`)
 
