@@ -211,13 +211,60 @@ valid Codex policy that is **never more restrictive than Claude**. `provision` i
 the thin IO seam, covered by the live integration ratchet that already proves
 Codex honours the emitted config.
 
+## Approval mechanics — verified live against codex-cli 0.150.1
+
+Empirically probed (`test/integration/autoreview.experiment.ts`), driving a real
+app-server and reading the notification feed:
+
+- **A sandbox is mandatory for *any* review.** `dangerFullAccess` (sandbox off) →
+  no wall → the classifier never runs → every action just executes, whatever the
+  reviewer. The check is literally "may I leave the sandbox?", so no sandbox = no
+  check. So a *judged* mode needs a `workspaceWrite` sandbox even when Claude is
+  unsandboxed — the sandbox is the review **trigger**, and the reviewer then grants
+  the escapes (net: unconfined-but-judged).
+- **`granular` is what fires the classifier — `on-request` does not.** Under
+  `approvalPolicy: on-request`, sandbox denials just hard-fail; the model doesn't
+  raise them. Under `granular{sandbox_approval, request_permissions, …}` the escape
+  becomes an `item/autoApprovalReview/*` event.
+- **`approvalsReviewer` is the human-vs-model switch** (under sandbox + granular):
+  - `user` → routes the escape to the **client** (`item/commandExecution/requestApproval`
+    → our elicitation → the human). *(3/3 in one session; see the determinism
+    caveat in Open — one earlier run self-approved instead.)*
+  - `auto_review` → Codex's **internal agent review** self-adjudicates
+    (`decisionSource: "agent"`), risk-scoring and approving authorized escapes.
+  - `guardian_subagent` → **no distinct behaviour at 0.150.1** — identical to
+    `auto_review`. The whole guardian/auto-review API is `[UNSTABLE]` and
+    `AutoReviewDecisionSource` has only the value `"agent"`, so no callback config
+    differentiates it. Revisit when Codex stabilises it.
+- **Two-tier safety:** the agent *self-regulates* first (it won't even attempt a
+  clearly-forbidden action — a "never delete these" instruction produced 0 tool
+  calls, no review), and the classifier reviews the escapes it *does* attempt.
+- The review carries a real risk assessment: `status`
+  (`approved`/`denied`/`timedOut`/…), `riskLevel`, `userAuthorization`
+  (`low`/`medium`/`high`), and a `rationale`; its action types include
+  `command`, `execve`, `applyPatch`, **`networkAccess`**, `mcpToolCall`,
+  `requestPermissions` — so network egress is gated the same way.
+
+### Verified mapping (all judged modes need a workspace sandbox as the trigger)
+
+| Claude mode | scope (`sandboxPolicy`) | `approvalPolicy` | `approvalsReviewer` | effect |
+|---|---|---|---|---|
+| `plan` | `readOnly` | untrusted | — | read-only |
+| `default`/`ask` | `workspaceWrite` | `granular` | **`user`** | escapes → human elicitation |
+| `auto` | `workspaceWrite` | `granular` | **`auto_review`** | escapes → model-judged |
+| `bypass`/`dontAsk` | `dangerFullAccess` | never | — | unconfined, no check |
+
+Note this means mode and scope are **not** fully orthogonal: a judged mode forces a
+`workspaceWrite` sandbox regardless of Claude's own sandbox setting, because the
+sandbox is what makes a review happen. Only the never-ask modes go
+`dangerFullAccess`.
+
 ## Open
 
-- **Escalation-raising in the sandboxed column** — `on-request` does NOT turn a
-  sandbox denial into an approval event (live-observed: a sandboxed `auto` run just
-  hard-failed network/write, "no escalation requested"), so `auto_review` never
-  sees anything. Map the `granular` policy (`sandbox_approval`, `request_permissions`)
-  so escapes are raised, then adjudicated by `auto_review`. Verify with the ratchet.
+- **`user`-routing determinism** — `granular + reviewer=user` routed to the client
+  3/3 in one session, but an earlier run self-approved via the agent instead. Pin
+  whether `user` reliably routes to the human (if not, `default` can't depend on
+  it), and whether prompt wording or some other config drives the difference.
 - **WebFetch cross-channel mapping** — decide and verify how a Claude WebFetch tool
   permission translates to Codex's sandboxed-exec network (allow, never fence).
 - **`CodexPolicy` type + compile/provision split** — the pure in-memory shape and
