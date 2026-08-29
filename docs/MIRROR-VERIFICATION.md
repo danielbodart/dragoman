@@ -114,6 +114,13 @@ is it default-deny, with an allowlist opening it. It remains a **coarse bool** �
 an allowlist opens *all* network, not only the listed hosts (per-host restriction
 is the deferred network-host mapping below).
 
+Verified against the Claude Code docs (code.claude.com, 2.1.250): sandbox and
+permissions are **orthogonal** — the sandbox does OS-level network/fs isolation
+for Bash, permission modes govern tool prompting; permission mode (incl. `auto`)
+does **not** affect Bash network. The allowlist that opens sandbox network can
+come from **either** `sandbox.network.allowedDomains` **or** `WebFetch(domain:…)`
+allow rules (Claude merges both), so `networkEnabled` honours both.
+
 ### D. Approval handler — allow auto-accept / deny pre-decline (`pump.ts`)
 
 Verified live under `plan` (untrusted), the posture that actually round-trips

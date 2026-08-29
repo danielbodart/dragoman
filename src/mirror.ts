@@ -143,7 +143,19 @@ function sandboxPolicyFor(sandbox: SandboxMode, settings: EffectiveSettings, cwd
  */
 function networkEnabled(settings: EffectiveSettings): boolean {
   if (!settings.sandboxEnabled) return true;
-  return settings.allowedDomains.length > 0 || settings.strictAllowlist === true;
+  // Under Claude's sandbox the allowlist can come from EITHER sandbox.network
+  // OR `WebFetch(domain:...)` permission rules — Claude merges both into the
+  // sandbox network config, so either opening network must flip the bool.
+  return (
+    settings.allowedDomains.length > 0 ||
+    settings.strictAllowlist === true ||
+    settings.allow.some(isWebFetchDomainAllow)
+  );
+}
+
+/** A `WebFetch(domain:...)` allow rule — merged into Claude's sandbox network allowlist. */
+function isWebFetchDomainAllow(rule: string): boolean {
+  return /^WebFetch\(domain:/.test(rule.trim());
 }
 
 /**

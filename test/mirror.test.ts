@@ -99,6 +99,13 @@ describe("mirror — sandbox settings → SandboxPolicy", () => {
     const p = mirror(settings({ sandboxEnabled: true, strictAllowlist: true }), "default", "/repo");
     expect(p.sandboxPolicy).toMatchObject({ networkAccess: true });
   });
+
+  test("under Claude's sandbox, a WebFetch(domain:) allow rule also enables network", () => {
+    // Claude merges WebFetch(domain:...) allow rules into the sandbox network
+    // allowlist, so they must flip the coarse bool too — not only sandbox.network.
+    const p = mirror(settings({ sandboxEnabled: true, allow: ["WebFetch(domain:example.com)"] }), "default", "/repo");
+    expect(p.sandboxPolicy).toMatchObject({ networkAccess: true });
+  });
 });
 
 describe("mirror — allow rules → execpolicy amendments", () => {
