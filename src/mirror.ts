@@ -16,14 +16,18 @@ import type { ApprovalsReviewer } from "../generated/codex-protocol/ts/v2/Approv
 import type { ExecPolicyAmendment } from "../generated/codex-protocol/ts/ExecPolicyAmendment.ts";
 
 /**
- * Claude's permission modes. `posture` on a run accepts one of these so Claude
- * can supply the live mode the MCP server cannot read; the static file value
- * (`defaultMode`) is the same vocabulary.
+ * Claude's permission modes (see code.claude.com/docs/en/permission-modes).
+ *
+ * **Manual mode** — reads-only, asks before most file/shell/network actions — has
+ * the **config value `default`** (what hooks, the SDK, and `defaultMode` use); the
+ * CLI also accepts **`manual`** as an alias for the same mode. Both are current and
+ * map identically here. `posture` on a run accepts any of these so Claude can
+ * supply the live mode the server can't read; `defaultMode` uses the same vocabulary.
  */
 export type ClaudeMode =
   | "plan"
-  | "default"
-  | "manual"
+  | "default" // Manual mode's config value…
+  | "manual" // …and its CLI alias — same mode
   | "acceptEdits"
   | "auto"
   | "dontAsk"
@@ -66,11 +70,11 @@ export function profileIdForBase(base: string): string {
  * `danger-full-access` (no OS sandbox).
  *
  *   - `plan` → `:read-only` — a read-only intent.
- *   - never-ask modes (`bypassPermissions` / `dontAsk`) → `undefined` →
- *     `danger-full-access`: Claude won't stop to judge anything, so there's nothing
- *     to review; run unconfined.
- *   - every JUDGED mode (`default` / `manual` / `acceptEdits` / `auto`) →
- *     `:workspace` — **even when Claude isn't sandboxing**. The sandbox is the
+ *   - `bypassPermissions` → `undefined` → `danger-full-access`: full access, no
+ *     sandbox and no review. (`dontAsk` is NOT the same: it "proceeds without
+ *     asking, still sandboxed" → `:workspace` + `never` approval below.)
+ *   - every other mode (`default` / `manual` / `acceptEdits` / `auto` / `dontAsk`)
+ *     → `:workspace` — **even when Claude isn't sandboxing**. The sandbox is the
  *     review *trigger*: an escape past it is what raises Codex's approval review
  *     (verified — no sandbox means the classifier never runs). The reviewer then
  *     grants the escapes (`user` → the human, `auto_review` → Codex's model), so
@@ -82,8 +86,8 @@ export function profileIdForBase(base: string): string {
  */
 function baseFor(_settings: EffectiveSettings, mode: ClaudeMode): string | undefined {
   if (mode === "plan") return ":read-only";
-  if (mode === "bypassPermissions" || mode === "dontAsk") return undefined; // danger-full-access
-  return ":workspace";
+  if (mode === "bypassPermissions") return undefined; // danger-full-access: no sandbox
+  return ":workspace"; // includes dontAsk — never-ask, but still sandboxed
 }
 
 /**
@@ -166,7 +170,9 @@ export function allProfiles(settings: EffectiveSettings): ManagedProfile[] {
   return PROFILE_BASES.map((base) => ({ id: profileIdForBase(base), base, network, filesystem }));
 }
 
-/** The safe default when no mode is known (PLAN §10.2 tier 3): ask, read-only. */
+/** The safe default when no mode is known (PLAN §10.2 tier 3): `default` — Manual
+ * mode's config value, and Claude's own built-in default in every server-relevant
+ * context (`claude -p`, the SDK, no flags). Reads-only, ask for everything else. */
 const SAFE_DEFAULT: ClaudeMode = "default";
 
 /**

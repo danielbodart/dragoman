@@ -109,23 +109,24 @@ trusts these hosts, so let Codex's exec reach them too" → a Codex network-*all
 is a cross-channel decision to verify, never an identity, and it must **never**
 become a *fence* that restricts Codex to only those hosts.
 
-#### The mode × sandbox matrix
+#### Claude's permission modes (authoritative — [docs](https://code.claude.com/docs/en/permission-modes))
 
-| Claude mode | sandbox off → `sandboxPolicy` | sandbox on → `sandboxPolicy` | `approvalPolicy` | reviewer |
-|---|---|---|---|---|
-| `plan` | `readOnly` | `readOnly` | untrusted (moot) | user |
-| `default`/ask | `dangerFullAccess` ✓ | `workspaceWrite` + tables | on-request | user |
-| `acceptEdits` | `dangerFullAccess` ✓ | `workspaceWrite` + tables | on-request / granular | user |
-| `auto` | `dangerFullAccess` ✓ | `workspaceWrite` + tables | on-request | **`auto_review`** |
-| `bypass`/`dontAsk` | `dangerFullAccess` | `dangerFullAccess` | never | — |
+Modes are the **approval baseline**; the Bash sandbox is a *separate* axis for what
+an action can reach ("the Bash sandbox and auto mode work independently and
+combine"). Manual mode's **config value is `default`**; the CLI also accepts
+`manual` for the same mode.
 
-Scope derivation (`baseFor` → sandbox-derived) is **implemented and live-verified**:
-an `auto` run under no Claude sandbox now reaches the network and writes outside the
-cwd, matching Claude. Confirmed too that under `dangerFullAccess` an asking
-`approvalPolicy` is **moot** — no confinement means nothing to escalate, so Codex
-just runs (as Claude's `auto` does once its classifier allows). So the sandbox-off
-column is settled: `dangerFullAccess`, full access, prompting only via the
-sandboxed column.
+| mode | runs without asking |
+|---|---|
+| `default` / `manual` | reads only |
+| `acceptEdits` | reads, file edits, common fs commands (`mkdir`/`touch`/`mv`/`cp`) |
+| `plan` | reads, plus classifier-approved commands when `auto` is available |
+| `auto` | everything, with background safety checks (the classifier) |
+| `dontAsk` | **only pre-approved tools** (locked-down CI) — NOT the same as bypass |
+| `bypassPermissions` | everything |
+
+How Dragoman maps these onto Codex is the [Implemented mapping](#implemented-mapping)
+below — settled and verified for `auto`; the others are provisional (see Open).
 
 `auto` uses **`auto_review`** (locked): Codex's model classifies escalations — the
 closest available analog to Claude's auto classifier, since routing to Claude's own
@@ -249,22 +250,35 @@ app-server and reading the notification feed:
   `command`, `execve`, `applyPatch`, **`networkAccess`**, `mcpToolCall`,
   `requestPermissions` — so network egress is gated the same way.
 
-### Verified mapping (all judged modes need a workspace sandbox as the trigger)
+<h3 id="implemented-mapping">Implemented mapping</h3>
+
+What `mirror()` currently emits (`bypassPermissions` alone is `dangerFullAccess`;
+everything else is sandboxed, so the sandbox can trigger a review):
 
 | Claude mode | scope (`sandboxPolicy`) | `approvalPolicy` | `approvalsReviewer` | effect |
 |---|---|---|---|---|
 | `plan` | `readOnly` | untrusted | — | read-only |
-| `default`/`ask` | `workspaceWrite` | `granular` | **`user`** | escapes → human elicitation |
-| `auto` | `workspaceWrite` | `granular` | **`auto_review`** | escapes → model-judged |
-| `bypass`/`dontAsk` | `dangerFullAccess` | never | — | unconfined, no check |
+| `default`/`manual` | `workspaceWrite` | `granular` | **`user`** | escapes → human elicitation |
+| `acceptEdits` | `workspaceWrite` | `granular` | `user` | escapes → human (provisional) |
+| `auto` | `workspaceWrite` | `granular` | **`auto_review`** | escapes → model-judged ✅ verified |
+| `dontAsk` | `workspaceWrite` | never | — | sandboxed, only pre-approved run; no prompts |
+| `bypassPermissions` | `dangerFullAccess` | never | — | unconfined, no check |
 
-Note this means mode and scope are **not** fully orthogonal: a judged mode forces a
-`workspaceWrite` sandbox regardless of Claude's own sandbox setting, because the
-sandbox is what makes a review happen. Only the never-ask modes go
-`dangerFullAccess`.
+Mode and scope are **not** fully orthogonal: a sandboxed mode forces a
+`workspaceWrite` sandbox regardless of Claude's own setting, because the sandbox is
+what makes a review happen. Only `bypassPermissions` goes `dangerFullAccess`.
+`auto` is the verified, settled row; `default`/`acceptEdits`/`plan`/`dontAsk` are
+provisional and need the same live-probing treatment (see Open) — their exact
+`approvalPolicy`/reviewer and whether they should ask per-command vs per-escape
+isn't pinned yet.
 
 ## Open
 
+- **Non-`auto` judged modes need more work** — `default`/`ask`/`plan` aren't fully
+  pinned; there's likely variance *inside a sandbox* (e.g. whether escapes reliably
+  route to the human vs self-review, and `plan`'s exact posture). `auto` is the
+  important, verified one; refine the others later with the same live probing.
+  Permissions requests still fail-closed (their reply grants a profile, not a yes/no).
 - **WebFetch cross-channel mapping** — decide and verify how a Claude WebFetch tool
   permission translates to Codex's sandboxed-exec network (allow, never fence).
 - **`CodexPolicy` type + compile/provision split** — the pure in-memory shape and

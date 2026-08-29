@@ -33,7 +33,7 @@ describe("profile route enforces per-host network through ThreadRuns", () => {
         const layout = { realHome: join(homedir(), ".codex"), isolatedHome: join(homeParent, "codex-home") };
 
         const runs: ThreadRuns = new ThreadRuns(
-          () => AppServerProcess.start(["codex", "app-server"], { CODEX_HOME: ensureCodexHome(allProfiles(effective()), layout) }),
+          async () => ({ conn: await AppServerProcess.start(["codex", "app-server"], { CODEX_HOME: ensureCodexHome(allProfiles(effective()), layout) }) }),
           (conn) => startPump(conn, runs, new ScriptedElicitation()),
           Date.now,
           effective,

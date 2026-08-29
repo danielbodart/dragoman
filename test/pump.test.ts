@@ -20,9 +20,9 @@ function bridge(threadId = "t1", settings: () => EffectiveSettings = emptySettin
   const elicitation = new FakeElicitationChannel();
   conn.results["thread/start"] = [{ thread: { id: threadId } }];
   conn.results["turn/start"] = [{ turn: { id: "turn1" } }];
-  // Match production wiring: ThreadRuns connects lazily via the thunk and the
-  // pump is attached on connect. The fake is returned immediately.
-  const runs = new ThreadRuns(async () => conn, (c) => startPump(c, runs, elicitation), () => 1000, settings);
+  // Match production wiring: ThreadRuns provisions per run via the thunk and the
+  // pump is attached on connect. The same fake is returned for the run.
+  const runs = new ThreadRuns(async () => ({ conn }), (c) => startPump(c, runs, elicitation), () => 1000, settings);
   return { conn, elicitation, runs, threadId };
 }
 
@@ -83,7 +83,7 @@ describe("codex_run / codex_status", () => {
     process.env.CLAUDE_CONFIG_DIR = "/nonexistent-dragoman-test-config";
     process.env.CLAUDE_PROJECT_DIR = "/nonexistent-dragoman-test-project";
     try {
-      const runs = new ThreadRuns(async () => conn, (c) => startPump(c, runs, new FakeElicitationChannel()));
+      const runs = new ThreadRuns(async () => ({ conn }), (c) => startPump(c, runs, new FakeElicitationChannel()));
       expect(await runs.start("do the thing", "/repo")).toBe("t9");
     } finally {
       process.env.CLAUDE_CONFIG_DIR = previous.dir;

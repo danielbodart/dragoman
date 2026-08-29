@@ -15,7 +15,7 @@
  * `codex_status` tool) touches no I/O at all: it is a map read of whatever the
  * pump last wrote.
  */
-import { mirror, resolveMode } from "./mirror.ts";
+import { mirror, resolveMode, type CodexPolicy } from "./mirror.ts";
 import { readSettings as readSettingsFromDisk, type EffectiveSettings } from "./settings.ts";
 import type { AppServerConn } from "./codex.ts";
 import type { RunHandle, RunRecord } from "./model.ts";
@@ -26,42 +26,61 @@ import type { TurnStartResponse } from "../generated/codex-protocol/ts/v2/TurnSt
 /** A read-only snapshot of a run, as `codex_status` returns it. */
 export type RunSnapshot = Readonly<RunRecord>;
 
+/**
+ * A freshly provisioned app-server for one run: the connection plus an optional
+ * `cleanup` the caller runs once the run settles (e.g. remove the per-run
+ * isolated CODEX_HOME). Provisioning is the IO seam — it writes the compiled
+ * config to disk and spawns codex — kept OUT of this class (which stays pure of
+ * the filesystem) and out of `compile` (`mirror`, which is pure of everything).
+ */
+export interface Provisioned {
+  readonly conn: AppServerConn;
+  readonly cleanup?: () => void;
+}
+
 export class ThreadRuns {
   /** Keyed by thread id, which is also the handle. The pump looks runs up the same way. */
   private readonly runs = new Map<RunHandle, RunRecord>();
   /** Per-run revision counter and long-poll waiters, driving `waitForUpdate`. */
   private readonly revisions = new Map<RunHandle, number>();
   private readonly waiters = new Map<RunHandle, Array<() => void>>();
-  private conn?: AppServerConn;
-  private connecting?: Promise<AppServerConn>;
+  /** The live app-server behind each run, torn down when the run settles. */
+  private readonly provisioned = new Map<RunHandle, Provisioned>();
 
   /**
-   * Takes a `connect` thunk rather than a live connection, so the codex
-   * subprocess is spawned lazily on the first `start()` — not at MCP startup.
-   * That keeps the MCP server responsive to `initialize`/`tools/list`
-   * immediately, and means a missing/broken codex only fails a `codex_run`
-   * call (surfaced to that tool), never the whole server. `onConnect` lets the
-   * composition root wire the pump onto the connection the moment it exists.
+   * `provision` spawns a FRESH app-server per run from the compiled policy — so
+   * every run's Codex config is generated from the settings read at that moment
+   * (docs/POLICY-COMPILER.md: per-run spawn; caching is a later decorator). Codex
+   * is not touched until the first `start()`, keeping the MCP server responsive to
+   * `initialize`/`tools/list` and letting a broken codex fail only a `codex_run`
+   * call. `onConn` wires the pump onto each new connection.
    */
   constructor(
-    private readonly connect: () => Promise<AppServerConn>,
-    private readonly onConnect: (conn: AppServerConn) => void = () => {},
+    private readonly provision: (policy: CodexPolicy) => Promise<Provisioned>,
+    private readonly onConn: (conn: AppServerConn) => void = () => {},
     private readonly now: () => number = Date.now,
     /** Injectable so the mirror is tested against fixture settings, not the real disk. */
     private readonly readSettings: () => EffectiveSettings = readSettingsFromDisk,
   ) {}
 
-  /** Connect once, memoized — concurrent first calls share one in-flight connect. */
-  private async connection(): Promise<AppServerConn> {
-    if (this.conn) return this.conn;
-    if (!this.connecting) {
-      this.connecting = this.connect().then((conn) => {
-        this.conn = conn;
-        this.onConnect(conn);
-        return conn;
-      });
+  /** Close every live app-server and run its cleanup — for process shutdown. */
+  closeAll(): void {
+    for (const handle of [...this.provisioned.keys()]) this.dispose(handle);
+  }
+
+  /** Tear down the app-server behind a settled run. Idempotent. */
+  private dispose(handle: RunHandle): void {
+    const p = this.provisioned.get(handle);
+    if (!p) return;
+    this.provisioned.delete(handle);
+    // `cleanup` (from the provision seam) owns the teardown: close the connection
+    // AND remove the run's isolated home. Keeping it there leaves this class free
+    // of both the concrete connection type and the filesystem.
+    try {
+      p.cleanup?.();
+    } catch {
+      // best-effort teardown — a failed cleanup must never break status/bump
     }
-    return this.connecting;
   }
 
   /**
@@ -75,10 +94,14 @@ export class ThreadRuns {
    * form is accepted.
    */
   async start(prompt: string, cwd: string, posture?: string): Promise<RunHandle> {
-    const conn = await this.connection();
+    // Compile (pure): merged settings + resolved mode → the Codex policy for THIS
+    // run. Then provision (IO): a fresh app-server whose config is that policy.
     const settings = this.readSettings();
     const mode = resolveMode(settings, posture);
     const policy = mirror(settings, mode);
+    const provisioned = await this.provision(policy);
+    const conn = provisioned.conn;
+    this.onConn(conn); // wire the pump onto this run's connection
 
     // The permission profile (in the isolated CODEX_HOME config) is the unified
     // scope + network axis; writable roots ride the first-class runtimeWorkspaceRoots
@@ -100,6 +123,7 @@ export class ThreadRuns {
     const thread = (await conn.request("thread/start", params)) as ThreadStartResponse;
     const handle = thread.thread.id;
 
+    this.provisioned.set(handle, provisioned); // torn down when the run settles
     this.runs.set(handle, {
       handle,
       status: "starting",
@@ -164,6 +188,11 @@ export class ThreadRuns {
       this.waiters.set(handle, []);
       for (const resume of waiters) resume();
     }
+    // A settled run's app-server has done its job — tear it down (per-run spawn
+    // means one process per run). The run RECORD stays so `codex_status` can still
+    // report the final snapshot; only the connection + its home are released.
+    const run = this.runs.get(handle);
+    if (run && (run.status === "done" || run.status === "error")) this.dispose(handle);
   }
 
   /** A run's current revision — 0 until its first mutation. */

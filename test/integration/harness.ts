@@ -75,7 +75,7 @@ export async function withProfiledCodex<T>(effective: EffectiveSettings, fn: (co
 export function profiledRuns(effective: EffectiveSettings, elicitation: ScriptedElicitation, homeParent: string): ThreadRuns {
   const layout = { realHome: join(homedir(), ".codex"), isolatedHome: join(homeParent, "codex-home") };
   const runs: ThreadRuns = new ThreadRuns(
-    () => AppServerProcess.start(["codex", "app-server"], { CODEX_HOME: ensureCodexHome(allProfiles(effective), layout) }),
+    async () => ({ conn: await AppServerProcess.start(["codex", "app-server"], { CODEX_HOME: ensureCodexHome(allProfiles(effective), layout) }) }),
     (conn) => startPump(conn, runs, elicitation),
     Date.now,
     () => effective,

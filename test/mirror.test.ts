@@ -21,8 +21,12 @@ describe("resolveMode (the three-tier posture)", () => {
     expect(resolveMode(settings({ defaultMode: "acceptEdits" }))).toBe("acceptEdits");
   });
 
-  test("falls back to the safe default when neither is set", () => {
+  test("falls back to the safe default (default = Manual mode) when neither is set", () => {
     expect(resolveMode(settings())).toBe("default");
+  });
+
+  test("'manual' is accepted as the CLI alias of default (resolves as-is, maps the same)", () => {
+    expect(resolveMode(settings({ defaultMode: "manual" }))).toBe("manual");
   });
 
   test("an unrecognised mode string degrades to the safe default, never throws", () => {
@@ -77,22 +81,20 @@ describe("mirror — mode → scope (judged modes force :workspace as the review
     expect(mirror(settings({ sandboxEnabled: true }), "plan").profile!.base).toBe(":read-only");
   });
 
-  // Judged modes → :workspace even when Claude isn't sandboxing — the sandbox is the
-  // review trigger; the reviewer (user/auto_review) then grants the escapes.
-  for (const mode of ["default", "manual", "acceptEdits", "auto"] as const) {
+  // Sandboxed modes → :workspace even when Claude isn't sandboxing — the sandbox is
+  // the review trigger. Includes dontAsk (never-ask, but still sandboxed).
+  for (const mode of ["default", "manual", "acceptEdits", "auto", "dontAsk"] as const) {
     test(`${mode} → :workspace (sandbox on OR off)`, () => {
       expect(mirror(settings(), mode).profile!.base).toBe(":workspace");
       expect(mirror(settings({ sandboxEnabled: true }), mode).profile!.base).toBe(":workspace");
     });
   }
 
-  // Never-ask modes → no profile → danger-full-access, regardless of sandbox.
-  for (const mode of ["dontAsk", "bypassPermissions"] as const) {
-    test(`${mode} → no profile (danger-full-access)`, () => {
-      expect(mirror(settings(), mode).profile).toBeUndefined();
-      expect(mirror(settings({ sandboxEnabled: true }), mode).profile).toBeUndefined();
-    });
-  }
+  // Only bypassPermissions → no profile → danger-full-access (full access, no sandbox).
+  test("bypassPermissions → no profile (danger-full-access), regardless of sandbox", () => {
+    expect(mirror(settings(), "bypassPermissions").profile).toBeUndefined();
+    expect(mirror(settings({ sandboxEnabled: true }), "bypassPermissions").profile).toBeUndefined();
+  });
 });
 
 describe("mirror — network posture → profile.network.enabled", () => {
@@ -157,8 +159,8 @@ describe("mirror — profiles (the unified scope + network axis)", () => {
     expect(p!.network).toEqual({ enabled: true, domains: [["a.com", "allow"], ["c.com", "allow"], ["b.com", "deny"]] });
   });
 
-  test("never-ask mode → no profile (danger-full-access; network open by nature)", () => {
-    expect(profileFor(settings(), "dontAsk")).toBeUndefined();
+  test("bypassPermissions → no profile (danger-full-access; network open by nature)", () => {
+    expect(profileFor(settings(), "bypassPermissions")).toBeUndefined();
   });
 
   test("allProfiles yields one profile per extendable base, sharing the network rules", () => {

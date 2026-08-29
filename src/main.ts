@@ -1,10 +1,11 @@
+import { rmSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { AppServerProcess } from "./codex.ts";
-import { ensureCodexHome } from "./codex-home.ts";
+import { codexHomeLayout, ensureCodexHome } from "./codex-home.ts";
 import { McpElicitationChannel } from "./elicitation.ts";
 import { buildServer, serve } from "./mcp.ts";
-import { allProfiles } from "./mirror.ts";
 import { startPump } from "./pump.ts";
-import { readSettings } from "./settings.ts";
 import { ThreadRuns } from "./thread-run.ts";
 import { version } from "./version.ts";
 
@@ -85,27 +86,40 @@ export async function main(argv: readonly string[]): Promise<number> {
   // Everything below stdout is the MCP channel to Claude Code — diagnostics go
   // to stderr so they never corrupt the protocol on stdout.
   //
-  // Codex is connected LAZILY: the MCP server must answer initialize/tools/list
-  // immediately, and a missing/broken codex should fail only a codex_run call,
-  // not the whole bridge. So ThreadRuns takes a connect thunk and spawns codex
-  // on the first run; the pump is wired onto the connection when it appears.
+  // PER-RUN SPAWN (docs/POLICY-COMPILER.md): every codex_run provisions its OWN
+  // codex app-server, whose config is compiled from the settings read at that
+  // moment, against a UNIQUE isolated CODEX_HOME (so concurrent runs never clobber
+  // one config.toml). Codex is untouched until the first run, keeping the MCP
+  // server responsive to initialize/tools/list and letting a broken codex fail
+  // only a codex_run call. This is the provision seam — the only place that
+  // touches the filesystem or spawns a process.
   const controller = new AbortController();
-  let conn: AppServerProcess | undefined;
+  const { realHome } = codexHomeLayout();
+  const runsRoot = join(homedir(), ".dragoman", "runs");
 
   const runs = new ThreadRuns(
-    // Spawn codex against Dragoman's ISOLATED CODEX_HOME, whose config carries the
-    // mirrored permission profiles (scope + network) without touching the user's
-    // real ~/.codex. Profiles are generated from the settings read here, at spawn.
-    () => {
-      const home = ensureCodexHome(allProfiles(readSettings()));
-      return AppServerProcess.start(parsed.codexCommand, { CODEX_HOME: home });
+    async (policy) => {
+      // One throwaway home per run, carrying just this run's compiled profile
+      // (none → danger-full-access). Inherits the user's auth/config, never
+      // touches the real ~/.codex.
+      const runDir = join(runsRoot, crypto.randomUUID());
+      const home = ensureCodexHome(policy.profile ? [policy.profile] : [], {
+        realHome,
+        isolatedHome: join(runDir, "codex-home"),
+      });
+      const conn = await AppServerProcess.start(parsed.codexCommand, { CODEX_HOME: home });
+      return {
+        conn,
+        cleanup: () => {
+          conn.close();
+          rmSync(runDir, { recursive: true, force: true });
+        },
+      };
     },
-    (connected) => {
-      conn = connected as AppServerProcess;
-      // Wire the pump the moment the connection exists. Not awaited (it runs for
-      // the connection's life); a failure is logged to stderr, never left as an
-      // unhandled rejection that could take the MCP server down.
-      void startPump(connected, runs, elicitation, { signal: controller.signal }).catch((error: unknown) => {
+    (conn) => {
+      // Wire the pump onto this run's connection. Not awaited (it runs for the
+      // connection's life); a failure is logged, never an unhandled rejection.
+      void startPump(conn, runs, elicitation, { signal: controller.signal }).catch((error: unknown) => {
         console.error(`Dragoman pump stopped: ${(error as Error).message}`);
       });
     },
@@ -120,14 +134,14 @@ export async function main(argv: readonly string[]): Promise<number> {
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
       controller.abort();
-      conn?.close();
+      runs.closeAll();
       process.exit(0);
     });
   }
 
-  console.error(`Dragoman ${version} — MCP server ready (Codex via \`${parsed.codexCommand.join(" ")}\`, connected on first use)`);
+  console.error(`Dragoman ${version} — MCP server ready (Codex via \`${parsed.codexCommand.join(" ")}\`, per-run spawn)`);
   await serve(server); // returns when Claude Code closes the stdio pipe
-  conn?.close();
+  runs.closeAll();
   return 0;
 }
 
