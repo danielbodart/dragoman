@@ -5,8 +5,6 @@
 > **The interpreter between two courts**
   A local bridge that makes OpenAI **Codex** a native-feeling subagent inside Anthropic's **Claude Code**.
 
----
-
 A _dragoman_ was the interpreter-diplomat who let two courts speaking different
 languages do business. That is exactly this tool's job: Claude Code and the Codex
 app-server speak different protocols, and Dragoman translates between them — so
