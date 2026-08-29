@@ -95,16 +95,23 @@ describe("codex_run / codex_status", () => {
     const { conn, runs } = bridge();
     await runs.start("do the thing", "/repo");
     const start = conn.requests.find((r) => r.method === "thread/start");
-    // Empty settings + no posture → mode "default" → on-request under workspace-write.
-    expect(start?.params).toMatchObject({ cwd: "/repo", approvalPolicy: "on-request", sandbox: "workspace-write" });
+    // Empty settings + no posture → mode "default" → on-request, workspace profile,
+    // cwd writable. The profile carries scope + network; sandbox enum is NOT sent.
+    expect(start?.params).toMatchObject({
+      cwd: "/repo",
+      approvalPolicy: "on-request",
+      permissions: "dragoman-workspace",
+      runtimeWorkspaceRoots: ["/repo"],
+    });
+    expect((start?.params as { sandbox?: unknown }).sandbox).toBeUndefined();
   });
 
   test("an explicit posture overrides the static default", async () => {
     const { conn, runs } = bridge();
     await runs.start("plan it", "/repo", "plan");
     const start = conn.requests.find((r) => r.method === "thread/start");
-    // plan → untrusted (ask before acting) + read-only.
-    expect(start?.params).toMatchObject({ cwd: "/repo", approvalPolicy: "untrusted", sandbox: "read-only" });
+    // plan → untrusted (ask before acting) + read-only profile.
+    expect(start?.params).toMatchObject({ cwd: "/repo", approvalPolicy: "untrusted", permissions: "dragoman-read-only" });
   });
 
   test("status is a no-IO snapshot and reflects the latest heartbeat", async () => {

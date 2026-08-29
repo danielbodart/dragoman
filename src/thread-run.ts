@@ -80,7 +80,17 @@ export class ThreadRuns {
     const mode = resolveMode(settings, posture);
     const policy = mirror(settings, mode, cwd);
 
-    const params: ThreadStartParams = { cwd, approvalPolicy: policy.approvalPolicy, sandbox: policy.sandbox };
+    // The permission profile (in the isolated CODEX_HOME config) is the unified
+    // scope + network axis; writable roots ride the first-class runtimeWorkspaceRoots
+    // param (cwd + Claude's additionalDirectories), which is orthogonal to the
+    // profile. `sandbox`/`sandboxPolicy` are NOT sent — they are mutually exclusive
+    // with `permissions`.
+    const params: ThreadStartParams = {
+      cwd,
+      approvalPolicy: policy.approvalPolicy,
+      permissions: policy.profile.id,
+      runtimeWorkspaceRoots: [cwd, ...settings.additionalDirectories],
+    };
     const thread = (await conn.request("thread/start", params)) as ThreadStartResponse;
     const handle = thread.thread.id;
 
@@ -102,7 +112,7 @@ export class ThreadRuns {
         threadId: handle,
         input: [{ type: "text", text: prompt, text_elements: [] }],
         approvalPolicy: policy.approvalPolicy,
-        sandboxPolicy: policy.sandboxPolicy,
+        permissions: policy.profile.id,
       })
       .then((response) => {
         const turn = response as TurnStartResponse;

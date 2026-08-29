@@ -1,7 +1,10 @@
 import { AppServerProcess } from "./codex.ts";
+import { ensureCodexHome } from "./codex-home.ts";
 import { McpElicitationChannel } from "./elicitation.ts";
 import { buildServer, serve } from "./mcp.ts";
+import { allProfiles } from "./mirror.ts";
 import { startPump } from "./pump.ts";
+import { readSettings } from "./settings.ts";
 import { ThreadRuns } from "./thread-run.ts";
 import { version } from "./version.ts";
 
@@ -90,7 +93,13 @@ export async function main(argv: readonly string[]): Promise<number> {
   let conn: AppServerProcess | undefined;
 
   const runs = new ThreadRuns(
-    () => AppServerProcess.start(parsed.codexCommand),
+    // Spawn codex against Dragoman's ISOLATED CODEX_HOME, whose config carries the
+    // mirrored permission profiles (scope + network) without touching the user's
+    // real ~/.codex. Profiles are generated from the settings read here, at spawn.
+    () => {
+      const home = ensureCodexHome(allProfiles(readSettings()));
+      return AppServerProcess.start(parsed.codexCommand, { CODEX_HOME: home });
+    },
     (connected) => {
       conn = connected as AppServerProcess;
       // Wire the pump the moment the connection exists. Not awaited (it runs for
