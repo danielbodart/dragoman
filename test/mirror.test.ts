@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mirror, resolveMode } from "../src/mirror.ts";
+import { allProfiles, mirror, profileFor, resolveMode } from "../src/mirror.ts";
 import type { EffectiveSettings } from "../src/settings.ts";
 
 /** Effective settings with sensible empty defaults, overridable field by field. */
@@ -128,6 +128,35 @@ describe("mirror — allow rules → execpolicy amendments", () => {
   test("multiple Bash rules each produce a prefix", () => {
     const p = mirror(settings({ allow: ["Bash(git status)", "Bash(ls -la)"] }), "default", "/repo");
     expect(p.execpolicyAmendments).toEqual([["git", "status"], ["ls", "-la"]]);
+  });
+});
+
+describe("mirror — profiles (the unified scope + network axis)", () => {
+  test("posture picks the base scope: plan→read-only, default→workspace, bypass→danger", () => {
+    expect(profileFor(settings(), "plan").base).toBe(":read-only");
+    expect(profileFor(settings(), "default").base).toBe(":workspace");
+    expect(profileFor(settings(), "bypassPermissions").base).toBe(":danger-full-access");
+  });
+
+  test("profile id is derived from the base scope", () => {
+    expect(profileFor(settings(), "plan").id).toBe("dragoman-read-only");
+    expect(profileFor(settings(), "default").id).toBe("dragoman-workspace");
+  });
+
+  test("network mirrors Claude: enabled when unsandboxed, domains from allow/deny + WebFetch", () => {
+    const p = profileFor(settings({ sandboxEnabled: true, allowedDomains: ["a.com"], deniedDomains: ["b.com"], allow: ["WebFetch(domain:c.com)"] }), "default");
+    expect(p.network).toEqual({ enabled: true, domains: [["a.com", "allow"], ["c.com", "allow"], ["b.com", "deny"]] });
+  });
+
+  test("no sandbox → network enabled, no domains", () => {
+    expect(profileFor(settings(), "default").network).toEqual({ enabled: true, domains: [] });
+  });
+
+  test("allProfiles yields one profile per base scope, sharing the network rules", () => {
+    const ps = allProfiles(settings({ sandboxEnabled: true, allowedDomains: ["a.com"] }));
+    expect(ps.map((p) => p.base)).toEqual([":read-only", ":workspace", ":danger-full-access"]);
+    expect(new Set(ps.map((p) => JSON.stringify(p.network))).size).toBe(1); // same network everywhere
+    expect(ps[1]!.network!.domains).toEqual([["a.com", "allow"]]);
   });
 });
 

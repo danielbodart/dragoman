@@ -9,6 +9,7 @@
  * it, plus the sandbox/rules, onto Codex's knobs.
  */
 import type { EffectiveSettings } from "./settings.ts";
+import type { DomainAction, ManagedProfile } from "./codex-config.ts";
 import type { AskForApproval } from "../generated/codex-protocol/ts/v2/AskForApproval.ts";
 import type { SandboxMode } from "../generated/codex-protocol/ts/v2/SandboxMode.ts";
 import type { SandboxPolicy } from "../generated/codex-protocol/ts/v2/SandboxPolicy.ts";
@@ -39,6 +40,61 @@ export interface CodexPolicy {
   readonly execpolicyAmendments: readonly ExecPolicyAmendment[];
   /** Command token prefixes from Claude's `deny` Bash rules — pre-declined. */
   readonly denyPrefixes: readonly (readonly string[])[];
+  /** The permission profile this thread selects — the unified scope + network axis. */
+  readonly profile: ManagedProfile;
+}
+
+/** Dragoman's three managed profile ids, one per built-in base scope. */
+export const PROFILE_BASES = [":read-only", ":workspace", ":danger-full-access"] as const;
+
+/** The profile id for a base scope, e.g. `:workspace` → `dragoman-workspace`. */
+export function profileIdForBase(base: string): string {
+  return `dragoman-${base.slice(1)}`;
+}
+
+/** The built-in Codex base scope for a Claude mode (mirrors `sandboxModeFor`). */
+function baseFor(mode: ClaudeMode): string {
+  if (mode === "plan") return ":read-only";
+  if (mode === "bypassPermissions") return ":danger-full-access";
+  return ":workspace";
+}
+
+/**
+ * Claude's network posture as a profile's network rules: the coarse `enabled`
+ * switch plus per-host allow/deny — `allowedDomains` and `WebFetch(domain:)` allow
+ * rules become allows, `deniedDomains` become denies (Codex lets deny win).
+ */
+function networkFor(settings: EffectiveSettings): { enabled: boolean; domains: [string, DomainAction][] } {
+  const domains: [string, DomainAction][] = [];
+  for (const host of settings.allowedDomains) domains.push([host, "allow"]);
+  for (const rule of settings.allow) {
+    const host = webFetchDomain(rule);
+    if (host) domains.push([host, "allow"]);
+  }
+  for (const host of settings.deniedDomains) domains.push([host, "deny"]);
+  return { enabled: networkEnabled(settings), domains };
+}
+
+/** The host of a `WebFetch(domain:...)` allow rule, or undefined. */
+function webFetchDomain(rule: string): string | undefined {
+  const match = /^WebFetch\(domain:([^)]+)\)$/.exec(rule.trim());
+  return match ? match[1]!.trim() : undefined;
+}
+
+/** The profile a thread at this posture selects. */
+export function profileFor(settings: EffectiveSettings, mode: ClaudeMode): ManagedProfile {
+  const base = baseFor(mode);
+  return { id: profileIdForBase(base), base, network: networkFor(settings) };
+}
+
+/**
+ * All profiles Dragoman writes into the isolated config — one per base scope,
+ * sharing the same network rules — so any posture's thread can select its scope
+ * from a config generated once when codex is spawned.
+ */
+export function allProfiles(settings: EffectiveSettings): ManagedProfile[] {
+  const network = networkFor(settings);
+  return PROFILE_BASES.map((base) => ({ id: profileIdForBase(base), base, network }));
 }
 
 /** The safe default when no mode is known (PLAN §10.2 tier 3): ask, read-only. */
@@ -57,7 +113,8 @@ export function mirror(settings: EffectiveSettings, mode: ClaudeMode, cwd: strin
   const sandboxPolicy = sandboxPolicyFor(sandbox, settings, cwd);
   const execpolicyAmendments = bashPrefixes(settings.allow);
   const denyPrefixes = bashPrefixes(settings.deny);
-  return { approvalPolicy, sandbox, sandboxPolicy, execpolicyAmendments, denyPrefixes };
+  const profile = profileFor(settings, mode);
+  return { approvalPolicy, sandbox, sandboxPolicy, execpolicyAmendments, denyPrefixes, profile };
 }
 
 /**
