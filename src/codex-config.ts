@@ -21,14 +21,27 @@ const END = "# <<< DRAGOMAN MANAGED <<<";
 
 export type DomainAction = "allow" | "deny";
 
-/** One Codex permission profile Dragoman manages: a built-in base + network domain rules. */
+/** The network axis of a profile: coarse on/off, plus optional per-host rules. */
+export interface ProfileNetwork {
+  /** Coarse switch — mirrors whether Claude's tools have network at all. */
+  readonly enabled: boolean;
+  /** Host → allow/deny. Non-empty needs the proxy to enforce; deny wins in Codex. */
+  readonly domains: readonly (readonly [string, DomainAction])[];
+}
+
+/**
+ * One Codex permission profile Dragoman manages — the sandbox/isolation axis as a
+ * single unit: a built-in base scope plus the network rules. Selected per thread
+ * via `thread/start`'s `permissions` field, it replaces the legacy `sandbox` enum
+ * + `sandboxPolicy` object.
+ */
 export interface ManagedProfile {
   /** Profile id, selected per thread via `thread/start`'s `permissions` field. */
   readonly id: string;
   /** Built-in base profile to extend: `:read-only` · `:workspace` · `:danger-full-access`. */
   readonly base: string;
-  /** Host → allow/deny. Order-preserving; deny wins in Codex regardless of order. */
-  readonly domains: readonly (readonly [string, DomainAction])[];
+  /** Network rules; omit to leave the base's default network posture untouched. */
+  readonly network?: ProfileNetwork;
 }
 
 /**
@@ -43,27 +56,36 @@ export interface ManagedProfile {
  * a prepend (see `codex-home`), not here.
  */
 export function renderManagedBlock(profiles: readonly ManagedProfile[]): string {
-  // No profiles ⇒ nothing to manage: emit NO block, so the network proxy is not
-  // switched on when there are no domain rules to enforce. That keeps the escape
-  // hatch (no proxy machinery in the path unless it's doing a job) and leaves the
-  // user's config behaviour unchanged.
   if (profiles.length === 0) return "";
 
   const lines: string[] = [BEGIN];
-  // Domain rules are silently ignored unless the proxy is enabled.
-  lines.push("[features.network_proxy]", "enabled = true");
-  for (const profile of profiles) {
-    lines.push("", `[permissions.${profile.id}]`, `extends = ${tomlString(profile.base)}`);
-    lines.push(`[permissions.${profile.id}.network]`, "enabled = true");
-    if (profile.domains.length > 0) {
-      lines.push(`[permissions.${profile.id}.network.domains]`);
-      for (const [host, action] of profile.domains) {
-        lines.push(`${tomlString(host)} = ${tomlString(action)}`);
+  // The proxy is what ENFORCES per-host rules, and it is global to the config, so
+  // switch it on ONLY when some profile actually carries domain rules. No domains
+  // ⇒ no proxy: network stays coarse on/off, behaviour is unchanged, and the
+  // experimental proxy machinery never enters the path (the escape hatch).
+  if (profiles.some(hasDomains)) {
+    lines.push("[features.network_proxy]", "enabled = true", "");
+  }
+  for (const [index, profile] of profiles.entries()) {
+    if (index > 0) lines.push("");
+    lines.push(`[permissions.${profile.id}]`, `extends = ${tomlString(profile.base)}`);
+    if (profile.network) {
+      lines.push(`[permissions.${profile.id}.network]`, `enabled = ${profile.network.enabled}`);
+      if (profile.network.domains.length > 0) {
+        lines.push(`[permissions.${profile.id}.network.domains]`);
+        for (const [host, action] of profile.network.domains) {
+          lines.push(`${tomlString(host)} = ${tomlString(action)}`);
+        }
       }
     }
   }
   lines.push(END);
   return lines.join("\n");
+}
+
+/** Whether a profile carries per-host domain rules (which require the proxy). */
+function hasDomains(profile: ManagedProfile): boolean {
+  return (profile.network?.domains.length ?? 0) > 0;
 }
 
 /**

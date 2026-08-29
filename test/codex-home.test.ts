@@ -6,7 +6,7 @@ import { ensureCodexHome } from "../src/codex-home.ts";
 import type { ManagedProfile } from "../src/codex-config.ts";
 
 const profiles: ManagedProfile[] = [
-  { id: "dragoman-workspace", base: ":workspace", domains: [["example.com", "allow"], ["example.org", "deny"]] },
+  { id: "dragoman-workspace", base: ":workspace", network: { enabled: true, domains: [["example.com", "allow"], ["example.org", "deny"]] } },
 ];
 
 let root: string;
@@ -65,7 +65,7 @@ describe("ensureCodexHome", () => {
 
   test("is idempotent: a second call refreshes rather than stacking blocks", () => {
     ensureCodexHome(profiles, { realHome, isolatedHome });
-    ensureCodexHome([{ id: "dragoman-workspace", base: ":workspace", domains: [["only.com", "allow"]] }], { realHome, isolatedHome });
+    ensureCodexHome([{ id: "dragoman-workspace", base: ":workspace", network: { enabled: true, domains: [["only.com", "allow"]] } }], { realHome, isolatedHome });
     const config = readFileSync(join(isolatedHome, "config.toml"), "utf8");
     expect(config.match(/DRAGOMAN MANAGED \(do not edit/g)?.length).toBe(1);
     expect(config).toContain('"only.com" = "allow"');

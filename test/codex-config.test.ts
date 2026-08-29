@@ -11,7 +11,7 @@ import {
 const profile: ManagedProfile = {
   id: "dragoman-workspace",
   base: ":workspace",
-  domains: [["example.com", "allow"], ["example.org", "deny"]],
+  network: { enabled: true, domains: [["example.com", "allow"], ["example.org", "deny"]] },
 };
 
 describe("renderManagedBlock", () => {
@@ -27,10 +27,16 @@ describe("renderManagedBlock", () => {
     expect(renderManagedBlock([])).toBe("");
   });
 
-  test("a profile with no domains still enables its network but writes no domains table", () => {
-    const block = renderManagedBlock([{ id: "dragoman-plan", base: ":read-only", domains: [] }]);
-    expect(block).toContain("[permissions.dragoman-plan.network]\nenabled = true");
+  test("a profile with network but no domains sets enabled and no domains table or proxy", () => {
+    const block = renderManagedBlock([{ id: "dragoman-plan", base: ":read-only", network: { enabled: false, domains: [] } }]);
+    expect(block).toContain("[permissions.dragoman-plan.network]\nenabled = false");
     expect(block).not.toContain("network.domains");
+    expect(block).not.toContain("network_proxy"); // no domains ⇒ no proxy
+  });
+
+  test("the proxy is enabled only when some profile carries domain rules", () => {
+    expect(renderManagedBlock([profile])).toContain("[features.network_proxy]\nenabled = true");
+    expect(renderManagedBlock([{ id: "p", base: ":workspace", network: { enabled: true, domains: [] } }])).not.toContain("network_proxy");
   });
 
   test("is all [table] sections — no bare root key that would be absorbed by a preceding table", () => {
@@ -59,7 +65,7 @@ describe("spliceManagedBlock / stripManagedBlock", () => {
 
   test("replaces an existing managed block rather than stacking a second one", () => {
     const first = spliceManagedBlock(userConfig, renderManagedBlock([profile]));
-    const second = spliceManagedBlock(first, renderManagedBlock([{ ...profile, domains: [["only.com", "allow"]] }]));
+    const second = spliceManagedBlock(first, renderManagedBlock([{ ...profile, network: { enabled: true, domains: [["only.com", "allow"]] } }]));
     expect(second.match(/DRAGOMAN MANAGED \(do not edit/g)?.length).toBe(1); // exactly one block
     expect(second).toContain('"only.com" = "allow"');
     expect(second).not.toContain('"example.org" = "deny"');
