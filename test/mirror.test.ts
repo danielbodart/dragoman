@@ -31,130 +31,111 @@ describe("resolveMode (the three-tier posture)", () => {
   });
 });
 
-describe("mirror — mode → approval + sandbox", () => {
-  test("plan → untrusted + read-only", () => {
-    const p = mirror(settings(), "plan", "/repo");
+describe("mirror — mode → approval + profile scope", () => {
+  test("plan → untrusted + read-only profile", () => {
+    const p = mirror(settings(), "plan");
     expect(p.approvalPolicy).toBe("untrusted");
-    expect(p.sandbox).toBe("read-only");
-    expect(p.sandboxPolicy).toEqual({ type: "readOnly", networkAccess: true });
+    expect(p.profile!.base).toBe(":read-only");
   });
 
-  test("default → on-request + workspace-write with cwd writable", () => {
-    const p = mirror(settings(), "default", "/repo");
+  test("default → on-request + workspace profile", () => {
+    const p = mirror(settings(), "default");
     expect(p.approvalPolicy).toBe("on-request");
-    expect(p.sandbox).toBe("workspace-write");
-    expect(p.sandboxPolicy).toMatchObject({ type: "workspaceWrite", writableRoots: ["/repo"], networkAccess: true });
+    expect(p.profile!.base).toBe(":workspace");
   });
 
-  test("bypassPermissions → never + danger-full-access", () => {
-    const p = mirror(settings(), "bypassPermissions", "/repo");
+  test("bypassPermissions → never, no profile (danger uses the sandbox enum)", () => {
+    const p = mirror(settings(), "bypassPermissions");
     expect(p.approvalPolicy).toBe("never");
-    expect(p.sandbox).toBe("danger-full-access");
-    expect(p.sandboxPolicy).toEqual({ type: "dangerFullAccess" });
+    expect(p.profile).toBeUndefined();
   });
 
-  test("dontAsk → never (no prompting) but still sandboxed", () => {
-    const p = mirror(settings(), "dontAsk", "/repo");
+  test("dontAsk → never + workspace profile", () => {
+    const p = mirror(settings(), "dontAsk");
     expect(p.approvalPolicy).toBe("never");
-    expect(p.sandbox).toBe("workspace-write");
+    expect(p.profile!.base).toBe(":workspace");
   });
 
-  // manual/acceptEdits/auto all share default's posture: on-request +
-  // workspace-write. (auto ↔ on-request is the intended pairing — both delegate
-  // the accept/decline call to a model, Codex's autoApprovalReview; see
-  // docs/MIRROR-VERIFICATION.md.)
+  // manual/acceptEdits/auto share default's posture: on-request + workspace.
+  // (auto ↔ on-request is the intended pairing — both delegate accept/decline to
+  // a model, Codex's autoApprovalReview; see docs/MIRROR-VERIFICATION.md.)
   for (const mode of ["manual", "acceptEdits", "auto"] as const) {
-    test(`${mode} → on-request + workspace-write (same as default)`, () => {
-      const p = mirror(settings(), mode, "/repo");
+    test(`${mode} → on-request + workspace profile (same as default)`, () => {
+      const p = mirror(settings(), mode);
       expect(p.approvalPolicy).toBe("on-request");
-      expect(p.sandbox).toBe("workspace-write");
-      expect(p.sandboxPolicy).toMatchObject({ type: "workspaceWrite", writableRoots: ["/repo"], networkAccess: true });
+      expect(p.profile!.base).toBe(":workspace");
     });
   }
 });
 
-describe("mirror — sandbox settings → SandboxPolicy", () => {
-  test("additionalDirectories extend writableRoots after the cwd", () => {
-    const p = mirror(settings({ additionalDirectories: ["/data", "/cache"] }), "default", "/repo");
-    expect(p.sandboxPolicy).toMatchObject({ writableRoots: ["/repo", "/data", "/cache"] });
-  });
+describe("mirror — network posture → profile.network.enabled", () => {
+  const enabled = (s: Partial<EffectiveSettings>) => mirror(settings(s), "default").profile!.network!.enabled;
 
-  test("no Claude sandbox → network stays ON, mirroring Claude's own full network", () => {
-    // The common case: the user isn't using Claude's sandbox, so Claude's tools
-    // have full network — denying it to Codex would mirror more restrictively.
-    expect(mirror(settings(), "default", "/repo").sandboxPolicy).toMatchObject({ networkAccess: true });
+  test("no Claude sandbox → network ON (mirrors Claude's own full network)", () => {
+    expect(enabled({})).toBe(true);
   });
-
   test("under Claude's sandbox, no allowlist → network denied", () => {
-    const p = mirror(settings({ sandboxEnabled: true }), "default", "/repo");
-    expect(p.sandboxPolicy).toMatchObject({ networkAccess: false });
+    expect(enabled({ sandboxEnabled: true })).toBe(false);
   });
-
-  test("under Claude's sandbox, an allowlist flips network on", () => {
-    const p = mirror(settings({ sandboxEnabled: true, allowedDomains: ["api.example.com"] }), "default", "/repo");
-    expect(p.sandboxPolicy).toMatchObject({ networkAccess: true });
+  test("under Claude's sandbox, an allowlist enables network", () => {
+    expect(enabled({ sandboxEnabled: true, allowedDomains: ["api.example.com"] })).toBe(true);
   });
-
-  test("under Claude's sandbox, strictAllowlist alone also enables network", () => {
-    const p = mirror(settings({ sandboxEnabled: true, strictAllowlist: true }), "default", "/repo");
-    expect(p.sandboxPolicy).toMatchObject({ networkAccess: true });
+  test("under Claude's sandbox, strictAllowlist enables network", () => {
+    expect(enabled({ sandboxEnabled: true, strictAllowlist: true })).toBe(true);
   });
-
-  test("under Claude's sandbox, a WebFetch(domain:) allow rule also enables network", () => {
-    // Claude merges WebFetch(domain:...) allow rules into the sandbox network
-    // allowlist, so they must flip the coarse bool too — not only sandbox.network.
-    const p = mirror(settings({ sandboxEnabled: true, allow: ["WebFetch(domain:example.com)"] }), "default", "/repo");
-    expect(p.sandboxPolicy).toMatchObject({ networkAccess: true });
+  test("under Claude's sandbox, a WebFetch(domain:) allow rule enables network", () => {
+    // Claude merges WebFetch(domain:...) allow rules into the sandbox network allowlist.
+    expect(enabled({ sandboxEnabled: true, allow: ["WebFetch(domain:example.com)"] })).toBe(true);
   });
 });
 
 describe("mirror — allow rules → execpolicy amendments", () => {
   test("a Bash allow rule becomes a command-token prefix", () => {
-    const p = mirror(settings({ allow: ["Bash(npm run test:*)"] }), "default", "/repo");
+    const p = mirror(settings({ allow: ["Bash(npm run test:*)"] }), "default");
     expect(p.execpolicyAmendments).toEqual([["npm", "run", "test"]]);
   });
 
   test("non-Bash rules are ignored", () => {
-    const p = mirror(settings({ allow: ["Read(/src/**)", "WebFetch(domain:example.com)"] }), "default", "/repo");
+    const p = mirror(settings({ allow: ["Read(/src/**)", "WebFetch(domain:example.com)"] }), "default");
     expect(p.execpolicyAmendments).toEqual([]);
   });
 
   test("a bare Bash (allow-all) does NOT become an empty-prefix allow-all", () => {
     // An empty prefix would disable approval entirely — never emit it.
-    const p = mirror(settings({ allow: ["Bash"] }), "default", "/repo");
+    const p = mirror(settings({ allow: ["Bash"] }), "default");
     expect(p.execpolicyAmendments).toEqual([]);
   });
 
   test("multiple Bash rules each produce a prefix", () => {
-    const p = mirror(settings({ allow: ["Bash(git status)", "Bash(ls -la)"] }), "default", "/repo");
+    const p = mirror(settings({ allow: ["Bash(git status)", "Bash(ls -la)"] }), "default");
     expect(p.execpolicyAmendments).toEqual([["git", "status"], ["ls", "-la"]]);
   });
 });
 
 describe("mirror — profiles (the unified scope + network axis)", () => {
-  test("posture picks the base scope: plan→read-only, default→workspace, bypass→danger", () => {
-    expect(profileFor(settings(), "plan").base).toBe(":read-only");
-    expect(profileFor(settings(), "default").base).toBe(":workspace");
-    expect(profileFor(settings(), "bypassPermissions").base).toBe(":danger-full-access");
+  test("posture picks the base scope: plan→read-only, default→workspace, bypass→none", () => {
+    expect(profileFor(settings(), "plan")!.base).toBe(":read-only");
+    expect(profileFor(settings(), "default")!.base).toBe(":workspace");
+    expect(profileFor(settings(), "bypassPermissions")).toBeUndefined();
   });
 
   test("profile id is derived from the base scope", () => {
-    expect(profileFor(settings(), "plan").id).toBe("dragoman-read-only");
-    expect(profileFor(settings(), "default").id).toBe("dragoman-workspace");
+    expect(profileFor(settings(), "plan")!.id).toBe("dragoman-read-only");
+    expect(profileFor(settings(), "default")!.id).toBe("dragoman-workspace");
   });
 
   test("network mirrors Claude: enabled when unsandboxed, domains from allow/deny + WebFetch", () => {
     const p = profileFor(settings({ sandboxEnabled: true, allowedDomains: ["a.com"], deniedDomains: ["b.com"], allow: ["WebFetch(domain:c.com)"] }), "default");
-    expect(p.network).toEqual({ enabled: true, domains: [["a.com", "allow"], ["c.com", "allow"], ["b.com", "deny"]] });
+    expect(p!.network).toEqual({ enabled: true, domains: [["a.com", "allow"], ["c.com", "allow"], ["b.com", "deny"]] });
   });
 
   test("no sandbox → network enabled, no domains", () => {
-    expect(profileFor(settings(), "default").network).toEqual({ enabled: true, domains: [] });
+    expect(profileFor(settings(), "default")!.network).toEqual({ enabled: true, domains: [] });
   });
 
-  test("allProfiles yields one profile per base scope, sharing the network rules", () => {
+  test("allProfiles yields one profile per extendable base, sharing the network rules", () => {
     const ps = allProfiles(settings({ sandboxEnabled: true, allowedDomains: ["a.com"] }));
-    expect(ps.map((p) => p.base)).toEqual([":read-only", ":workspace", ":danger-full-access"]);
+    expect(ps.map((p) => p.base)).toEqual([":read-only", ":workspace"]);
     expect(new Set(ps.map((p) => JSON.stringify(p.network))).size).toBe(1); // same network everywhere
     expect(ps[1]!.network!.domains).toEqual([["a.com", "allow"]]);
   });
@@ -162,12 +143,12 @@ describe("mirror — profiles (the unified scope + network axis)", () => {
 
 describe("mirror — deny rules → deny prefixes", () => {
   test("a Bash deny rule becomes a command-token prefix", () => {
-    const p = mirror(settings({ deny: ["Bash(curl:*)", "Bash(git push:*)"] }), "default", "/repo");
+    const p = mirror(settings({ deny: ["Bash(curl:*)", "Bash(git push:*)"] }), "default");
     expect(p.denyPrefixes).toEqual([["curl"], ["git", "push"]]);
   });
 
   test("non-Bash and bare-Bash deny rules are ignored", () => {
-    const p = mirror(settings({ deny: ["Read(/etc/**)", "Bash"] }), "default", "/repo");
+    const p = mirror(settings({ deny: ["Read(/etc/**)", "Bash"] }), "default");
     expect(p.denyPrefixes).toEqual([]);
   });
 });

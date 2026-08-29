@@ -20,9 +20,13 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { AppServerProcess, type AppServerConn } from "../../src/codex.ts";
+import { ensureCodexHome } from "../../src/codex-home.ts";
+import { allProfiles } from "../../src/mirror.ts";
+import { startPump } from "../../src/pump.ts";
+import { ThreadRuns } from "../../src/thread-run.ts";
 import type { Approval, ElicitationChannel } from "../../src/elicitation.ts";
 import type { EffectiveSettings } from "../../src/settings.ts";
-import type { RunSnapshot, ThreadRuns } from "../../src/thread-run.ts";
+import type { RunSnapshot } from "../../src/thread-run.ts";
 import type { SandboxPolicy } from "../../generated/codex-protocol/ts/v2/SandboxPolicy.ts";
 import type { CommandExecResponse } from "../../generated/codex-protocol/ts/v2/CommandExecResponse.ts";
 
@@ -44,6 +48,49 @@ export async function exec(
   sandboxPolicy: SandboxPolicy,
 ): Promise<CommandExecResponse> {
   return (await conn.request("command/exec", { command: [...command], cwd, sandboxPolicy })) as CommandExecResponse;
+}
+
+/**
+ * Spawn codex against an isolated home carrying the profiles mirrored from
+ * `effective`, run `fn`, and clean up — the production path, model-free.
+ */
+export async function withProfiledCodex<T>(effective: EffectiveSettings, fn: (conn: AppServerConn) => Promise<T>): Promise<T> {
+  return withTempDir(async (homeParent) => {
+    const home = ensureCodexHome(allProfiles(effective), { realHome: join(homedir(), ".codex"), isolatedHome: join(homeParent, "codex-home") });
+    const conn = await AppServerProcess.start(["codex", "app-server"], { CODEX_HOME: home });
+    try {
+      return await fn(conn);
+    } finally {
+      conn.close();
+    }
+  });
+}
+
+/**
+ * A `ThreadRuns` wired the production way: its connect thunk builds an isolated
+ * CODEX_HOME carrying `effective`'s mirrored profiles and spawns codex against it,
+ * with the pump on a scripted elicitation. `homeParent` is a throwaway dir (from
+ * `withTempDir`) for the isolated home.
+ */
+export function profiledRuns(effective: EffectiveSettings, elicitation: ScriptedElicitation, homeParent: string): ThreadRuns {
+  const layout = { realHome: join(homedir(), ".codex"), isolatedHome: join(homeParent, "codex-home") };
+  const runs: ThreadRuns = new ThreadRuns(
+    () => AppServerProcess.start(["codex", "app-server"], { CODEX_HOME: ensureCodexHome(allProfiles(effective), layout) }),
+    (conn) => startPump(conn, runs, elicitation),
+    Date.now,
+    () => effective,
+  );
+  return runs;
+}
+
+/** Run one command under a named permission profile — no thread/turn/model. */
+export async function execProfiled(
+  conn: AppServerConn,
+  command: readonly string[],
+  cwd: string,
+  profile: string,
+): Promise<CommandExecResponse> {
+  return (await conn.request("command/exec", { command: [...command], cwd, permissionProfile: profile })) as CommandExecResponse;
 }
 
 /**

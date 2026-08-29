@@ -85,13 +85,11 @@ export function diagnostics(): string {
     sandboxEnabled: settings.sandboxEnabled,
     allowedDomains: settings.allowedDomains.length,
   }));
-  const cwd = process.env.CLAUDE_PROJECT_DIR ?? process.cwd();
   for (const posture of [undefined, "plan", "bypassPermissions"]) {
     const mode = resolveMode(settings, posture);
-    const policy = mirror(settings, mode, cwd);
+    const policy = mirror(settings, mode);
     lines.push(`  posture=${posture ?? "(none→static)"} → mode=${mode}:`);
-    lines.push(`     approvalPolicy=${JSON.stringify(policy.approvalPolicy)}  sandbox=${policy.sandbox}`);
-    lines.push(`     sandboxPolicy=${JSON.stringify(policy.sandboxPolicy)}`);
+    lines.push(`     approvalPolicy=${JSON.stringify(policy.approvalPolicy)}  profile=${JSON.stringify(policy.profile)}`);
     if (policy.execpolicyAmendments.length > 0) {
       lines.push(`     execpolicyAmendments=${JSON.stringify(policy.execpolicyAmendments)}`);
     }

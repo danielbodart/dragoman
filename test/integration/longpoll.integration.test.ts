@@ -11,21 +11,14 @@
  * firing. Ratcheted: one turn, then skipped.
  */
 import { describe, expect } from "bun:test";
-import { startPump } from "../../src/pump.ts";
-import { ThreadRuns } from "../../src/thread-run.ts";
 import { verifyOnce } from "./ratchet.ts";
-import { ScriptedElicitation, settings, withCodex, withTempDir } from "./harness.ts";
+import { ScriptedElicitation, profiledRuns, settings, withTempDir } from "./harness.ts";
 
 describe("long-poll drives a real turn", () => {
   verifyOnce("waitForUpdate reaches completion event-driven, no interval spinning", async () => {
-    await withCodex((conn) =>
+    await withTempDir((homeParent) =>
       withTempDir(async (cwd) => {
-        const runs: ThreadRuns = new ThreadRuns(
-          async () => conn,
-          (c) => startPump(c, runs, new ScriptedElicitation()),
-          Date.now,
-          () => settings(),
-        );
+        const runs = profiledRuns(settings(), new ScriptedElicitation(), homeParent);
         const handle = await runs.start(
           "Use your shell to run exactly this one command and then stop; do not run anything else: sleep 2 && echo dragoman-longpoll",
           cwd,

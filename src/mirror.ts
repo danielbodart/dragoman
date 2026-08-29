@@ -11,8 +11,6 @@
 import type { EffectiveSettings } from "./settings.ts";
 import type { DomainAction, ManagedProfile } from "./codex-config.ts";
 import type { AskForApproval } from "../generated/codex-protocol/ts/v2/AskForApproval.ts";
-import type { SandboxMode } from "../generated/codex-protocol/ts/v2/SandboxMode.ts";
-import type { SandboxPolicy } from "../generated/codex-protocol/ts/v2/SandboxPolicy.ts";
 import type { ExecPolicyAmendment } from "../generated/codex-protocol/ts/ExecPolicyAmendment.ts";
 
 /**
@@ -32,31 +30,30 @@ export type ClaudeMode =
 /** The Codex policy Dragoman applies to a thread/turn, mirroring Claude. */
 export interface CodexPolicy {
   readonly approvalPolicy: AskForApproval;
-  /** Enum form for `thread/start`. */
-  readonly sandbox: SandboxMode;
-  /** Structured form for `turn/start` / `thread/settings/update`. */
-  readonly sandboxPolicy: SandboxPolicy;
   /** execpolicy prefix allows, from Claude's `allow` Bash rules. */
   readonly execpolicyAmendments: readonly ExecPolicyAmendment[];
   /** Command token prefixes from Claude's `deny` Bash rules — pre-declined. */
   readonly denyPrefixes: readonly (readonly string[])[];
-  /** The permission profile this thread selects — the unified scope + network axis. */
-  readonly profile: ManagedProfile;
+  /**
+   * The permission profile this thread selects — the unified scope + network
+   * axis. Absent for the `bypassPermissions` posture: `:danger-full-access` is
+   * not an extendable profile base (Codex rejects it), and it means "no sandbox"
+   * anyway, so that posture uses the `danger-full-access` sandbox enum instead.
+   */
+  readonly profile?: ManagedProfile;
 }
 
-/** Dragoman's three managed profile ids, one per built-in base scope. */
-export const PROFILE_BASES = [":read-only", ":workspace", ":danger-full-access"] as const;
+/** Dragoman's managed profile bases — the two Codex lets a profile extend. */
+export const PROFILE_BASES = [":read-only", ":workspace"] as const;
 
 /** The profile id for a base scope, e.g. `:workspace` → `dragoman-workspace`. */
 export function profileIdForBase(base: string): string {
   return `dragoman-${base.slice(1)}`;
 }
 
-/** The built-in Codex base scope for a Claude mode (mirrors `sandboxModeFor`). */
+/** The built-in Codex base scope for a non-danger Claude mode. */
 function baseFor(mode: ClaudeMode): string {
-  if (mode === "plan") return ":read-only";
-  if (mode === "bypassPermissions") return ":danger-full-access";
-  return ":workspace";
+  return mode === "plan" ? ":read-only" : ":workspace";
 }
 
 /**
@@ -81,8 +78,9 @@ function webFetchDomain(rule: string): string | undefined {
   return match ? match[1]!.trim() : undefined;
 }
 
-/** The profile a thread at this posture selects. */
-export function profileFor(settings: EffectiveSettings, mode: ClaudeMode): ManagedProfile {
+/** The profile a thread at this posture selects, or undefined for danger (no profile). */
+export function profileFor(settings: EffectiveSettings, mode: ClaudeMode): ManagedProfile | undefined {
+  if (mode === "bypassPermissions") return undefined; // danger-full-access: not a profile base
   const base = baseFor(mode);
   return { id: profileIdForBase(base), base, network: networkFor(settings) };
 }
@@ -104,17 +102,16 @@ const SAFE_DEFAULT: ClaudeMode = "default";
  * Map a Claude posture onto a Codex policy.
  *
  * `mode` is the already-resolved posture (explicit param ?? defaultMode ?? safe
- * default — resolved by the caller via `resolveMode`). `cwd` is the run's
- * working directory, always a writable root under a write sandbox.
+ * default — resolved by the caller via `resolveMode`). The sandbox/isolation axis
+ * is the `profile` (scope + network); the run's writable roots (cwd +
+ * additionalDirectories) ride `runtimeWorkspaceRoots` at the thread edge.
  */
-export function mirror(settings: EffectiveSettings, mode: ClaudeMode, cwd: string): CodexPolicy {
+export function mirror(settings: EffectiveSettings, mode: ClaudeMode): CodexPolicy {
   const approvalPolicy = approvalFor(mode);
-  const sandbox = sandboxModeFor(mode, settings);
-  const sandboxPolicy = sandboxPolicyFor(sandbox, settings, cwd);
   const execpolicyAmendments = bashPrefixes(settings.allow);
   const denyPrefixes = bashPrefixes(settings.deny);
   const profile = profileFor(settings, mode);
-  return { approvalPolicy, sandbox, sandboxPolicy, execpolicyAmendments, denyPrefixes, profile };
+  return { approvalPolicy, execpolicyAmendments, denyPrefixes, profile };
 }
 
 /**
@@ -155,35 +152,6 @@ function approvalFor(mode: ClaudeMode): AskForApproval {
     case "acceptEdits":
     case "auto":
       return "on-request"; // ask when Codex hits something the sandbox can't cover
-  }
-}
-
-/** Mode + sandbox settings → the enum sandbox for thread/start (PLAN §10.3). */
-function sandboxModeFor(mode: ClaudeMode, settings: EffectiveSettings): SandboxMode {
-  if (mode === "plan") return "read-only";
-  if (mode === "bypassPermissions") return "danger-full-access";
-  // Everything else writes within the workspace. `sandbox.enabled:false` in
-  // Claude doesn't loosen this — Codex still benefits from a workspace boundary,
-  // and mirroring "hotter than Claude" is the one thing we never do.
-  return "workspace-write";
-}
-
-/** The structured SandboxPolicy for per-turn use, carrying dirs + network. */
-function sandboxPolicyFor(sandbox: SandboxMode, settings: EffectiveSettings, cwd: string): SandboxPolicy {
-  switch (sandbox) {
-    case "danger-full-access":
-      return { type: "dangerFullAccess" };
-    case "read-only":
-      return { type: "readOnly", networkAccess: networkEnabled(settings) };
-    case "workspace-write":
-      return {
-        type: "workspaceWrite",
-        // The cwd is always writable; additionalDirectories extend it.
-        writableRoots: [cwd, ...settings.additionalDirectories],
-        networkAccess: networkEnabled(settings),
-        excludeTmpdirEnvVar: false,
-        excludeSlashTmp: false,
-      };
   }
 }
 

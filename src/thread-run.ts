@@ -78,19 +78,22 @@ export class ThreadRuns {
     const conn = await this.connection();
     const settings = this.readSettings();
     const mode = resolveMode(settings, posture);
-    const policy = mirror(settings, mode, cwd);
+    const policy = mirror(settings, mode);
 
     // The permission profile (in the isolated CODEX_HOME config) is the unified
     // scope + network axis; writable roots ride the first-class runtimeWorkspaceRoots
     // param (cwd + Claude's additionalDirectories), which is orthogonal to the
-    // profile. `sandbox`/`sandboxPolicy` are NOT sent — they are mutually exclusive
-    // with `permissions`.
-    const params: ThreadStartParams = {
-      cwd,
-      approvalPolicy: policy.approvalPolicy,
-      permissions: policy.profile.id,
-      runtimeWorkspaceRoots: [cwd, ...settings.additionalDirectories],
-    };
+    // profile. `sandbox` is NOT sent with a profile — they are mutually exclusive.
+    // The one exception is the danger posture (no profile), which uses the
+    // `danger-full-access` sandbox enum directly (it means "no sandbox" anyway).
+    const params: ThreadStartParams = policy.profile
+      ? {
+          cwd,
+          approvalPolicy: policy.approvalPolicy,
+          permissions: policy.profile.id,
+          runtimeWorkspaceRoots: [cwd, ...settings.additionalDirectories],
+        }
+      : { cwd, approvalPolicy: policy.approvalPolicy, sandbox: "danger-full-access" };
     const thread = (await conn.request("thread/start", params)) as ThreadStartResponse;
     const handle = thread.thread.id;
 
@@ -112,7 +115,9 @@ export class ThreadRuns {
         threadId: handle,
         input: [{ type: "text", text: prompt, text_elements: [] }],
         approvalPolicy: policy.approvalPolicy,
-        permissions: policy.profile.id,
+        // Profile threads re-assert their profile per turn; the danger thread
+        // inherits its sandbox from thread/start (nothing to override here).
+        ...(policy.profile ? { permissions: policy.profile.id } : {}),
       })
       .then((response) => {
         const turn = response as TurnStartResponse;

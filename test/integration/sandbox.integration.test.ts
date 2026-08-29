@@ -1,102 +1,84 @@
 /**
- * Live sandbox/network verification — does Codex HONOUR the `sandboxPolicy`
- * `mirror()` emits? Each test drives the real `command/exec` RPC (no model turn)
- * with a policy built by the mirror, and asserts on the process exit code.
+ * Live sandbox/network verification on the PRODUCTION path: does Codex honour the
+ * permission PROFILE the mirror emits? Each test spawns codex against an isolated
+ * home carrying the mirrored profiles, then runs `command/exec` under a named
+ * `permissionProfile` (no thread/turn/model — deterministic and free) and asserts
+ * on the exit code.
  *
- * These replace the manual `claude -p` probes in docs/MIRROR-VERIFICATION.md with
- * executable ones. Ratcheted via `verifyOnce`: each runs once until green, then
- * is skipped (and skipped entirely where `codex` isn't installed).
+ * `additionalDirectories` (writable roots) is NOT here: it rides `thread/start`'s
+ * `runtimeWorkspaceRoots`, which `command/exec` has no equivalent for — that is
+ * covered as a thread-param assertion in `pump.test.ts` and end-to-end in
+ * `profile.integration.test.ts`. Ratcheted via `verifyOnce`.
  */
 import { describe, expect } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { mirror } from "../../src/mirror.ts";
+import { exec, execProfiled, settings, withCodex, withProfiledCodex, withTempDir } from "./harness.ts";
 import { verifyOnce } from "./ratchet.ts";
-import { exec, settings, withCodex, withTempDir } from "./harness.ts";
 
-describe("sandbox scope is honoured (mirror → command/exec)", () => {
-  verifyOnce("bypassPermissions (danger-full-access) can write outside the workspace", async () => {
+const WORKSPACE = "dragoman-workspace";
+const READ_ONLY = "dragoman-read-only";
+
+describe("sandbox scope is honoured (profile → command/exec)", () => {
+  verifyOnce("danger (sandbox enum, the bypass posture) can write outside the workspace", async () => {
+    // bypassPermissions has no profile — :danger-full-access is not an extendable
+    // base — so thread-run uses the sandbox enum; here we exercise the same path.
     await withCodex((conn) =>
       withTempDir((cwd) =>
         withTempDir(async (outside) => {
-          const policy = mirror(settings(), "bypassPermissions", cwd);
-          const res = await exec(conn, ["touch", join(outside, "probe.txt")], cwd, policy.sandboxPolicy);
+          const res = await exec(conn, ["touch", join(outside, "probe.txt")], cwd, { type: "dangerFullAccess" });
           expect(res.exitCode).toBe(0);
         }),
       ),
     );
   });
 
-  verifyOnce("dontAsk (workspace-write) allows writes in cwd but blocks outside", async () => {
-    await withCodex((conn) =>
+  verifyOnce("workspace profile allows cwd writes but blocks outside", async () => {
+    await withProfiledCodex(settings(), (conn) =>
       withTempDir((cwd) =>
         withTempDir(async (outside) => {
-          const policy = mirror(settings(), "dontAsk", cwd);
-          const inside = await exec(conn, ["touch", join(cwd, "probe.txt")], cwd, policy.sandboxPolicy);
-          expect(inside.exitCode).toBe(0);
-          const beyond = await exec(conn, ["touch", join(outside, "probe.txt")], cwd, policy.sandboxPolicy);
-          expect(beyond.exitCode).not.toBe(0);
+          expect((await execProfiled(conn, ["touch", join(cwd, "in.txt")], cwd, WORKSPACE)).exitCode).toBe(0);
+          expect((await execProfiled(conn, ["touch", join(outside, "out.txt")], cwd, WORKSPACE)).exitCode).not.toBe(0);
         }),
       ),
     );
   });
 
-  verifyOnce("additionalDirectories extends the writable roots", async () => {
-    await withCodex((conn) =>
-      withTempDir((cwd) =>
-        withTempDir(async (extra) => {
-          const policy = mirror(settings({ additionalDirectories: [extra] }), "dontAsk", cwd);
-          const res = await exec(conn, ["touch", join(extra, "probe.txt")], cwd, policy.sandboxPolicy);
-          expect(res.exitCode).toBe(0);
-        }),
-      ),
-    );
-  });
-
-  verifyOnce("plan (read-only) allows reads but blocks writes", async () => {
-    await withCodex((conn) =>
+  verifyOnce("read-only profile allows reads but blocks writes", async () => {
+    await withProfiledCodex(settings(), (conn) =>
       withTempDir(async (cwd) => {
-        const existing = join(cwd, "seed.txt");
-        writeFileSync(existing, "seed");
-        const policy = mirror(settings(), "plan", cwd);
-        const read = await exec(conn, ["cat", existing], cwd, policy.sandboxPolicy);
-        expect(read.exitCode).toBe(0);
-        const write = await exec(conn, ["touch", join(cwd, "probe.txt")], cwd, policy.sandboxPolicy);
-        expect(write.exitCode).not.toBe(0);
+        const seed = join(cwd, "seed.txt");
+        writeFileSync(seed, "hi");
+        expect((await execProfiled(conn, ["cat", seed], cwd, READ_ONLY)).exitCode).toBe(0);
+        expect((await execProfiled(conn, ["touch", join(cwd, "w.txt")], cwd, READ_ONLY)).exitCode).not.toBe(0);
       }),
     );
   });
 });
 
-describe("network access is honoured (mirror → command/exec)", () => {
+describe("network is honoured (profile → command/exec)", () => {
   const curl = ["curl", "-sS", "-m", "10", "-o", "/dev/null", "https://example.com"];
 
-  verifyOnce("no Claude sandbox → network is ON (mirrors Claude's own network)", async () => {
-    await withCodex((conn) =>
+  verifyOnce("no Claude sandbox → network ON", async () => {
+    await withProfiledCodex(settings(), (conn) =>
       withTempDir(async (cwd) => {
-        const policy = mirror(settings(), "dontAsk", cwd); // sandbox not enabled → network open
-        const res = await exec(conn, curl, cwd, policy.sandboxPolicy);
-        expect(res.exitCode).toBe(0);
+        expect((await execProfiled(conn, curl, cwd, WORKSPACE)).exitCode).toBe(0);
       }),
     );
   });
 
-  verifyOnce("under Claude's sandbox with no allowlist → network is blocked", async () => {
-    await withCodex((conn) =>
+  verifyOnce("sandbox on, no allowlist → network blocked", async () => {
+    await withProfiledCodex(settings({ sandboxEnabled: true }), (conn) =>
       withTempDir(async (cwd) => {
-        const policy = mirror(settings({ sandboxEnabled: true }), "dontAsk", cwd);
-        const res = await exec(conn, curl, cwd, policy.sandboxPolicy);
-        expect(res.exitCode).not.toBe(0);
+        expect((await execProfiled(conn, curl, cwd, WORKSPACE)).exitCode).not.toBe(0);
       }),
     );
   });
 
-  verifyOnce("under Claude's sandbox, a non-empty allowlist → network is enabled", async () => {
-    await withCodex((conn) =>
+  verifyOnce("sandbox on, allowlisted domain → reachable", async () => {
+    await withProfiledCodex(settings({ sandboxEnabled: true, allowedDomains: ["example.com"] }), (conn) =>
       withTempDir(async (cwd) => {
-        const policy = mirror(settings({ sandboxEnabled: true, allowedDomains: ["example.com"] }), "dontAsk", cwd);
-        const res = await exec(conn, curl, cwd, policy.sandboxPolicy);
-        expect(res.exitCode).toBe(0);
+        expect((await execProfiled(conn, curl, cwd, WORKSPACE)).exitCode).toBe(0);
       }),
     );
   });

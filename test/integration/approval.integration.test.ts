@@ -15,23 +15,16 @@
  * WITHOUT asking; an unmatched command asks.
  */
 import { describe, expect } from "bun:test";
-import { startPump } from "../../src/pump.ts";
-import { ThreadRuns } from "../../src/thread-run.ts";
 import { verifyOnce } from "./ratchet.ts";
-import { ScriptedElicitation, settings, settle, withCodex, withTempDir } from "./harness.ts";
+import { ScriptedElicitation, profiledRuns, settle, settings, withTempDir } from "./harness.ts";
 import type { EffectiveSettings } from "../../src/settings.ts";
 
 /** Run a single `plan`-posture Codex turn wired to a scripted elicitation. */
 async function turn(effective: EffectiveSettings, prompt: string): Promise<{ asks: number; status: string }> {
   const elicitation = new ScriptedElicitation("decline");
-  return withCodex((conn) =>
+  return withTempDir((homeParent) =>
     withTempDir(async (cwd) => {
-      const runs: ThreadRuns = new ThreadRuns(
-        async () => conn,
-        (c) => startPump(c, runs, elicitation),
-        Date.now,
-        () => effective,
-      );
+      const runs = profiledRuns(effective, elicitation, homeParent);
       const handle = await runs.start(prompt, cwd, "plan");
       const final = await settle(runs, handle);
       return { asks: elicitation.asks.length, status: final.status };
