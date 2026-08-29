@@ -283,14 +283,41 @@ prompt too. See Open.
 
 ## Open
 
+### Security findings (from the mode-mapping review)
+
+Root cause shared by A + B: Dragoman's gates (`denyPrefixes`, `commandFallback`,
+`fileChange`) run **only inside the approval handler**, which fires only on sandbox
+*escapes*. In-workspace commands auto-run untouched, and `auto` (closed
+`auto_review` loop) and `bypassPermissions` (`never`) round-trip no approval at all.
+The fix for both is **config-layer enforcement**: emit execpolicy rules into the
+generated `config.toml` so Codex contains commands itself, independent of approval
+routing or mode. (Per-approval `ExecPolicyAmendment` exists; confirm the static
+config-file equivalent first.)
+
+- **[A] In-workspace commands auto-run past the gate** (High). `dontAsk` ("only
+  pre-approved") still runs a non-allow-listed command that doesn't hit the sandbox
+  wall (e.g. `python3 -c …`); `commandFallback: "decline"` only fires for escapes.
+  Partly mitigated (Manual/plan/dontAsk are now `:read-only`), but not closed. Fix:
+  a **default-deny execpolicy** for `dontAsk` whose only allows are the mirrored
+  allow-prefixes.
+- **[B] Claude `deny` Bash rules are not enforced** (High) for in-workspace
+  commands, and **entirely unenforced in `auto` and `bypassPermissions`** (no
+  approval round-trip). Claude applies `deny` in every mode. Fix: emit the `deny`
+  prefixes as execpolicy **forbid** rules in `config.toml`.
+- **[C] acceptEdits auto-accepted escaped edits/commands** — ✅ FIXED
+  (`081f87e`): acceptEdits now elicits escapes and injects no fs-command allows.
+
+### Fidelity / features
+
 - **Live-probe the non-`auto` modes** — `default`/`manual`/`acceptEdits`/`plan`/
   `dontAsk` are mapped from the docs but not yet verified against real Codex like
-  `auto` was. Confirm: does `workspaceWrite` + `untrusted` actually raise edit/escape
-  approvals (so Manual prompts for edits and acceptEdits's `fileChange: accept` fires)?
-  does `dontAsk`'s decline-unmatched leave only allow-listed + read-only running?
+  `auto` was. Key unknown: does a `readOnly`/`workspaceWrite` write-escape actually
+  **escalate to the human** (so Manual can write after a prompt) or hard-fail (so
+  Manual behaves like plan)? And does `dontAsk`'s decline path leave only
+  allow-listed + read-only running once [A] is fixed?
 - **`autoAllowBashIfSandboxed`** — not read yet (default `true`). A user on the
   *regular* (non-auto-allow) sandbox expects in-workspace commands to prompt too;
-  we'd need to raise those instead of letting `:workspace` auto-run them.
+  we'd need to raise those instead of letting the sandbox auto-run them.
 - **Permissions requests** still fail-closed (their reply grants a profile, not a
   yes/no) — wire them once the profile-grant shape is handled.
 - **WebFetch cross-channel mapping** — decide and verify how a Claude WebFetch tool
