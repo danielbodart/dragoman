@@ -100,6 +100,10 @@ async function handleCommandApproval(
     return { decision: { acceptWithExecpolicyAmendment: { execpolicy_amendment: amendment } } };
   }
 
+  // Nothing pre-answered it. `dontAsk` ("only pre-approved tools") refuses without
+  // asking; every other mode routes the decision to the human.
+  if (run?.commandFallback === "decline") return { decision: "decline" };
+
   if (run) {
     run.status = "waiting-approval";
     runs.bump(params.threadId); // wake a long-poll: a decision is now pending
@@ -120,9 +124,9 @@ async function handleCommandApproval(
  * File-change approval: route through the human, mirroring the command path.
  *
  * Codex raises this when a write escapes its sandbox (e.g. under a judged mode's
- * `granular` policy with reviewer `user`). There are no allow/deny *command*
- * prefixes to pre-answer here — a file change is not a shell command — so it goes
- * straight to the elicitation. The reply is a `FileChangeApprovalDecision`.
+ * `granular` policy with reviewer `user`). The mode decides how: `acceptEdits`
+ * auto-accepts (Claude auto-approves edits), `dontAsk` refuses, everyone else asks
+ * the human. The reply is a `FileChangeApprovalDecision`.
  */
 async function handleFileChangeApproval(
   params: FileChangeRequestApprovalParams,
@@ -130,6 +134,11 @@ async function handleFileChangeApproval(
   elicitation: ElicitationChannel,
 ): Promise<unknown> {
   const run = runs.record(params.threadId);
+
+  // acceptEdits → auto-approve edits; dontAsk → refuse. Neither waits on a human.
+  if (run?.fileChange === "accept") return { decision: "accept" };
+  if (run?.fileChange === "decline") return { decision: "decline" };
+
   if (run) {
     run.status = "waiting-approval";
     runs.bump(params.threadId);

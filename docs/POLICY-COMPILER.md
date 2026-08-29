@@ -252,34 +252,45 @@ app-server and reading the notification feed:
 
 <h3 id="implemented-mapping">Implemented mapping</h3>
 
-What `mirror()` currently emits (`bypassPermissions` alone is `dangerFullAccess`;
-everything else is sandboxed, so the sandbox can trigger a review):
+What `mirror()` emits. In-workspace bash auto-runs (Claude's default **auto-allow**
+sandbox behaviour, which `:workspace` matches); the row governs the **escape /
+fallback** — a command or edit the sandbox can't cover — plus tool-level edits.
+Two per-run knobs carry the fallback to the pump: `commandFallback` (unmatched
+command → `elicit`/`decline`) and `fileChange` (edit → `elicit`/`accept`/`decline`).
 
-| Claude mode | scope (`sandboxPolicy`) | `approvalPolicy` | `approvalsReviewer` | effect |
-|---|---|---|---|---|
-| `plan` | `readOnly` | untrusted | — | read-only |
-| `default`/`manual` | `workspaceWrite` | `granular` | **`user`** | escapes → human elicitation |
-| `acceptEdits` | `workspaceWrite` | `granular` | `user` | escapes → human (provisional) |
-| `auto` | `workspaceWrite` | `granular` | **`auto_review`** | escapes → model-judged ✅ verified |
-| `dontAsk` | `workspaceWrite` | never | — | sandboxed, only pre-approved run; no prompts |
-| `bypassPermissions` | `dangerFullAccess` | never | — | unconfined, no check |
+| Claude mode | scope | `approvalPolicy` | reviewer | `commandFallback` | `fileChange` | effect |
+|---|---|---|---|---|---|---|
+| `plan` | `readOnly` | untrusted | user | elicit | elicit | read-only exploration; escapes → human |
+| `default`/`manual` | `workspaceWrite` | untrusted | user | elicit | elicit | reads/in-workspace run; edits + escapes → human |
+| `acceptEdits` | `workspaceWrite` | untrusted | user | elicit | **accept** | edits + fs cmds (`mkdir`/`touch`/`rm`/`rmdir`/`mv`/`cp`/`sed`) auto; other bash/escapes → human |
+| `auto` | `workspaceWrite` | `granular` | **`auto_review`** | elicit | elicit | escapes → model-judged ✅ **verified** |
+| `dontAsk` | `workspaceWrite` | untrusted | — | **decline** | **decline** | only pre-approved (allow rules) + read-only run; unmatched refused, never asks |
+| `bypassPermissions` | `dangerFullAccess` | never | — | — | — | everything, unconfined, no check |
 
 Mode and scope are **not** fully orthogonal: a sandboxed mode forces a
 `workspaceWrite` sandbox regardless of Claude's own setting, because the sandbox is
-what makes a review happen. Only `bypassPermissions` goes `dangerFullAccess`.
-`auto` is the verified, settled row; `default`/`acceptEdits`/`plan`/`dontAsk` are
-provisional and need the same live-probing treatment (see Open) — their exact
-`approvalPolicy`/reviewer and whether they should ask per-command vs per-escape
-isn't pinned yet.
+what makes a review/escape happen. Only `bypassPermissions` goes `dangerFullAccess`.
+
+`auto` is the **live-verified** row. The others are docs-derived best-effort and
+**not yet live-probed** — in particular whether a `workspaceWrite` sandbox raises
+edit/escape approvals the way this assumes (so Manual really prompts for edits, and
+acceptEdits's auto-accept actually fires) needs the same experiment treatment `auto`
+got. We also don't yet read `autoAllowBashIfSandboxed` (default `true`); a user who
+set the sandbox to *regular* (not auto-allow) would expect in-workspace commands to
+prompt too. See Open.
 
 ## Open
 
-- **Non-`auto` judged modes need more work** — `default`/`ask`/`plan` aren't fully
-  pinned; there's likely variance *inside a sandbox* (e.g. whether escapes reliably
-  route to the human vs self-review, and `plan`'s exact posture). `auto` is the
-  important, verified one; refine the others later with the same live probing.
-  Permissions requests still fail-closed (their reply grants a profile, not a yes/no).
+- **Live-probe the non-`auto` modes** — `default`/`manual`/`acceptEdits`/`plan`/
+  `dontAsk` are mapped from the docs but not yet verified against real Codex like
+  `auto` was. Confirm: does `workspaceWrite` + `untrusted` actually raise edit/escape
+  approvals (so Manual prompts for edits and acceptEdits's `fileChange: accept` fires)?
+  does `dontAsk`'s decline-unmatched leave only allow-listed + read-only running?
+- **`autoAllowBashIfSandboxed`** — not read yet (default `true`). A user on the
+  *regular* (non-auto-allow) sandbox expects in-workspace commands to prompt too;
+  we'd need to raise those instead of letting `:workspace` auto-run them.
+- **Permissions requests** still fail-closed (their reply grants a profile, not a
+  yes/no) — wire them once the profile-grant shape is handled.
 - **WebFetch cross-channel mapping** — decide and verify how a Claude WebFetch tool
   permission translates to Codex's sandboxed-exec network (allow, never fence).
-- **`CodexPolicy` type + compile/provision split** — the pure in-memory shape and
-  the per-run-spawn provision seam (kills `PROFILE_BASES`/`allProfiles`).
+- **Caching decorator** over `provision` (per-run spawn is the core; reuse later).

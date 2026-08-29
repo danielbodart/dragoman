@@ -44,6 +44,17 @@ export interface CodexPolicy {
    * → Codex's default (`user`), i.e. the human elicitation seam.
    */
   readonly approvalsReviewer?: ApprovalsReviewer;
+  /**
+   * What to do with a command approval the allow/deny prefixes don't settle:
+   * `elicit` asks the human (Manual/acceptEdits/plan), `decline` refuses without
+   * asking (`dontAsk` — "only pre-approved tools", never waits for input).
+   */
+  readonly commandFallback: "elicit" | "decline";
+  /**
+   * What to do with a file-change (edit) approval: `elicit` asks the human,
+   * `accept` auto-approves (`acceptEdits`), `decline` refuses (`dontAsk`).
+   */
+  readonly fileChange: "elicit" | "accept" | "decline";
   /** execpolicy prefix allows, from Claude's `allow` Bash rules. */
   readonly execpolicyAmendments: readonly ExecPolicyAmendment[];
   /** Command token prefixes from Claude's `deny` Bash rules — pre-declined. */
@@ -186,10 +197,44 @@ const SAFE_DEFAULT: ClaudeMode = "default";
 export function mirror(settings: EffectiveSettings, mode: ClaudeMode): CodexPolicy {
   const approvalPolicy = approvalFor(mode);
   const approvalsReviewer = reviewerFor(mode);
-  const execpolicyAmendments = bashPrefixes(settings.allow);
+  // acceptEdits auto-approves file edits AND a fixed set of filesystem commands
+  // in-scope; we prepend those as execpolicy allows so they skip the prompt, on
+  // top of the user's own `allow` Bash rules.
+  const fromRules = bashPrefixes(settings.allow);
+  const execpolicyAmendments = mode === "acceptEdits" ? [...ACCEPT_EDITS_FS_COMMANDS, ...fromRules] : fromRules;
   const denyPrefixes = bashPrefixes(settings.deny);
   const profile = profileFor(settings, mode);
-  return { approvalPolicy, approvalsReviewer, execpolicyAmendments, denyPrefixes, profile };
+  return {
+    approvalPolicy,
+    approvalsReviewer,
+    commandFallback: commandFallbackFor(mode),
+    fileChange: fileChangeFor(mode),
+    execpolicyAmendments,
+    denyPrefixes,
+    profile,
+  };
+}
+
+/**
+ * acceptEdits auto-approves these filesystem Bash commands in-scope, alongside
+ * file edits (Claude's own list). The `:workspace` sandbox already confines them
+ * to the writable roots, so auto-accepting them here matches Claude without
+ * widening reach.
+ */
+const ACCEPT_EDITS_FS_COMMANDS: string[][] = [
+  ["mkdir"], ["touch"], ["rm"], ["rmdir"], ["mv"], ["cp"], ["sed"],
+];
+
+/** Unmatched command approval: `dontAsk` refuses without asking; others ask the human. */
+function commandFallbackFor(mode: ClaudeMode): "elicit" | "decline" {
+  return mode === "dontAsk" ? "decline" : "elicit";
+}
+
+/** File-edit approval: acceptEdits auto-accepts; dontAsk refuses; others ask the human. */
+function fileChangeFor(mode: ClaudeMode): "elicit" | "accept" | "decline" {
+  if (mode === "acceptEdits") return "accept";
+  if (mode === "dontAsk") return "decline";
+  return "elicit";
 }
 
 /**
@@ -229,19 +274,30 @@ const GRANULAR: AskForApproval = {
   granular: { sandbox_approval: true, request_permissions: true, rules: true, skill_approval: true, mcp_elicitations: true },
 };
 
-/** Mode → Codex approval policy. */
+/**
+ * Mode → Codex approval policy.
+ *
+ *   - `auto` → `granular`: raises sandbox escapes so the classifier (`auto_review`)
+ *     can judge them — Claude's "everything, with background safety checks".
+ *   - `bypassPermissions` → `never`: everything, no checks.
+ *   - everything else → `untrusted`: a sandbox escape (or a command the sandbox
+ *     can't cover) is raised for review; where it goes is the reviewer + the
+ *     `commandFallback`/`fileChange` knobs (human for Manual/acceptEdits/plan,
+ *     decline for dontAsk). In-workspace commands still auto-run — that's Claude's
+ *     default auto-allow sandbox behaviour, which Codex's `:workspace` matches.
+ */
 function approvalFor(mode: ClaudeMode): AskForApproval {
   switch (mode) {
-    case "plan":
-      return "untrusted"; // ask before acting; read-only anyway
+    case "auto":
+      return GRANULAR;
     case "bypassPermissions":
-    case "dontAsk":
-      return "never"; // Claude would not prompt, so neither does Codex
+      return "never";
+    case "plan":
     case "default":
     case "manual":
     case "acceptEdits":
-    case "auto":
-      return GRANULAR; // raise sandbox escapes so the reviewer (human/model) can judge
+    case "dontAsk":
+      return "untrusted";
   }
 }
 
@@ -250,11 +306,12 @@ function approvalFor(mode: ClaudeMode): AskForApproval {
  *
  *   - `auto` → `auto_review`: Codex's model judges escapes with a risk framework —
  *     the faithful analog of Claude's auto classifier.
- *   - `default`/`manual`/`acceptEdits` → `user`: escapes route to the CLIENT
+ *   - `default`/`manual`/`acceptEdits`/`plan` → `user`: escapes route to the CLIENT
  *     (`item/…/requestApproval`) → our elicitation → the human. NOTE: this must be
  *     set EXPLICITLY — leaving it unset uses the internal agent review (self-
  *     approves), NOT the human, despite the protocol doc's "defaults to user".
- *   - `plan`/`bypassPermissions`/`dontAsk` → none (read-only, or never-ask).
+ *   - `bypassPermissions` → none (never-ask). `dontAsk` → none: it refuses unmatched
+ *     approvals via `commandFallback: "decline"` rather than routing anywhere.
  *
  * Routing to Claude's OWN model isn't an option — Claude Code advertises no MCP
  * sampling (see the recorded finding). And the reviewer only bites under a sandbox
@@ -267,6 +324,7 @@ function reviewerFor(mode: ClaudeMode): ApprovalsReviewer | undefined {
     case "default":
     case "manual":
     case "acceptEdits":
+    case "plan":
       return "user"; // route escapes to the human via the elicitation seam
     default:
       return undefined; // plan / bypassPermissions / dontAsk: no reviewer needed

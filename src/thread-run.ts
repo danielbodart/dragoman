@@ -129,6 +129,8 @@ export class ThreadRuns {
       status: "starting",
       execpolicyAmendments: policy.execpolicyAmendments,
       denyPrefixes: policy.denyPrefixes,
+      commandFallback: policy.commandFallback,
+      fileChange: policy.fileChange,
     });
     this.bump(handle);
 

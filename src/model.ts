@@ -44,6 +44,12 @@ export interface RunRecord {
   readonly execpolicyAmendments?: readonly (readonly string[])[];
   /** Command token prefixes Claude would deny — pre-declined without prompting. */
   readonly denyPrefixes?: readonly (readonly string[])[];
+  /** What to do with a command approval no allow/deny prefix settles: ask the human
+   * (`elicit`, default) or refuse without asking (`decline`, for `dontAsk`). */
+  readonly commandFallback?: "elicit" | "decline";
+  /** What to do with a file-edit approval: ask (`elicit`), auto-approve (`accept`,
+   * for `acceptEdits`), or refuse (`decline`, for `dontAsk`). */
+  readonly fileChange?: "elicit" | "accept" | "decline";
   status: RunStatus;
   latestBeat?: Beat;
   /** The final assistant message / turn result, once `status` is "done". */

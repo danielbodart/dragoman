@@ -43,18 +43,17 @@ function isGranular(p: unknown): boolean {
 }
 
 describe("mirror — mode → approvalPolicy (the approval axis)", () => {
-  test("plan → untrusted", () => {
-    expect(mirror(settings(), "plan").approvalPolicy).toBe("untrusted");
+  test("auto → granular (raises escapes for the classifier)", () => {
+    expect(isGranular(mirror(settings(), "auto").approvalPolicy)).toBe(true);
   });
-  // Judged modes use `granular`, which raises a sandbox escape for review.
-  for (const mode of ["default", "manual", "acceptEdits", "auto"] as const) {
-    test(`${mode} → granular`, () => {
-      expect(isGranular(mirror(settings(), mode).approvalPolicy)).toBe(true);
-    });
-  }
-  for (const mode of ["dontAsk", "bypassPermissions"] as const) {
-    test(`${mode} → never`, () => {
-      expect(mirror(settings(), mode).approvalPolicy).toBe("never");
+  test("bypassPermissions → never", () => {
+    expect(mirror(settings(), "bypassPermissions").approvalPolicy).toBe("never");
+  });
+  // Everyone else raises escapes as `untrusted`; where they go is the reviewer +
+  // the commandFallback/fileChange knobs.
+  for (const mode of ["plan", "default", "manual", "acceptEdits", "dontAsk"] as const) {
+    test(`${mode} → untrusted`, () => {
+      expect(mirror(settings(), mode).approvalPolicy).toBe("untrusted");
     });
   }
 });
@@ -63,14 +62,36 @@ describe("mirror — mode → approvalsReviewer (human vs model)", () => {
   test("auto → auto_review (Codex's model judges escapes)", () => {
     expect(mirror(settings(), "auto").approvalsReviewer).toBe("auto_review");
   });
-  for (const mode of ["default", "manual", "acceptEdits"] as const) {
+  for (const mode of ["default", "manual", "acceptEdits", "plan"] as const) {
     test(`${mode} → user (escapes routed to the human elicitation)`, () => {
       expect(mirror(settings(), mode).approvalsReviewer).toBe("user");
     });
   }
-  for (const mode of ["plan", "dontAsk", "bypassPermissions"] as const) {
+  // bypass never asks; dontAsk refuses via commandFallback, not a reviewer.
+  for (const mode of ["dontAsk", "bypassPermissions"] as const) {
     test(`${mode} → no reviewer`, () => {
       expect(mirror(settings(), mode).approvalsReviewer).toBeUndefined();
+    });
+  }
+});
+
+describe("mirror — mode → fallback knobs (commandFallback / fileChange)", () => {
+  test("dontAsk refuses unmatched commands and file edits (only pre-approved run)", () => {
+    const p = mirror(settings(), "dontAsk");
+    expect(p.commandFallback).toBe("decline");
+    expect(p.fileChange).toBe("decline");
+  });
+  test("acceptEdits auto-accepts file edits + auto-approves fs commands, asks other bash", () => {
+    const p = mirror(settings(), "acceptEdits");
+    expect(p.fileChange).toBe("accept");
+    expect(p.commandFallback).toBe("elicit");
+    expect(p.execpolicyAmendments).toEqual(expect.arrayContaining([["mkdir"], ["rm"], ["sed"]]));
+  });
+  for (const mode of ["default", "manual", "plan", "auto"] as const) {
+    test(`${mode} → elicit command fallback, elicit file edits`, () => {
+      const p = mirror(settings(), mode);
+      expect(p.commandFallback).toBe("elicit");
+      expect(p.fileChange).toBe("elicit");
     });
   }
 });

@@ -95,12 +95,12 @@ describe("codex_run / codex_status", () => {
     const { conn, runs } = bridge();
     await runs.start("do the thing", "/repo");
     const start = conn.requests.find((r) => r.method === "thread/start");
-    // Empty settings + no posture → mode "default" (a JUDGED mode) → :workspace
-    // profile as the review trigger + granular approval + reviewer "user" (escapes
-    // routed to the human). Sandbox enum is NOT sent (that's the danger path only).
+    // Empty settings + no posture → mode "default" (Manual) → :workspace profile
+    // (in-workspace commands auto-run, matching auto-allow) + untrusted so escapes
+    // are raised + reviewer "user" (escapes → the human). Sandbox enum is NOT sent.
     const params = start?.params as { cwd?: string; approvalPolicy?: unknown; approvalsReviewer?: unknown; permissions?: string; sandbox?: unknown };
     expect(params.cwd).toBe("/repo");
-    expect(typeof params.approvalPolicy === "object" && params.approvalPolicy !== null && "granular" in params.approvalPolicy).toBe(true);
+    expect(params.approvalPolicy).toBe("untrusted");
     expect(params.approvalsReviewer).toBe("user");
     expect(params.permissions).toBe("dragoman-workspace");
     expect(params.sandbox).toBeUndefined();
@@ -271,6 +271,36 @@ describe("the approval bridge — the anti-hang property", () => {
     elicitation.answer("decline");
     expect(await replyPromise).toEqual({ decision: "decline" }); // a valid FileChangeApprovalDecision
     expect(runs.status(threadId)?.status).toBe("running");
+  });
+
+  const fileChangeReq = (threadId: string): ServerRequest => ({
+    method: "item/fileChange/requestApproval",
+    id: 5,
+    params: { threadId, turnId: "turn1", itemId: "f1" } as never,
+  });
+
+  test("dontAsk: an unmatched command is declined without asking the human", async () => {
+    const s = (): EffectiveSettings => ({ ...emptySettings(), defaultMode: "dontAsk" });
+    const { conn, elicitation, runs, threadId } = bridge("t1", s);
+    await runs.start("go", "/repo");
+    expect(await conn.emitServerRequest(requestApproval(threadId, "curl evil.example"))).toEqual({ decision: "decline" });
+    expect(elicitation.asks).toEqual([]);
+  });
+
+  test("dontAsk: a file edit is declined without asking the human", async () => {
+    const s = (): EffectiveSettings => ({ ...emptySettings(), defaultMode: "dontAsk" });
+    const { conn, elicitation, runs, threadId } = bridge("t1", s);
+    await runs.start("go", "/repo");
+    expect(await conn.emitServerRequest(fileChangeReq(threadId))).toEqual({ decision: "decline" });
+    expect(elicitation.asks).toEqual([]);
+  });
+
+  test("acceptEdits: a file edit is auto-accepted without asking the human", async () => {
+    const s = (): EffectiveSettings => ({ ...emptySettings(), defaultMode: "acceptEdits" });
+    const { conn, elicitation, runs, threadId } = bridge("t1", s);
+    await runs.start("go", "/repo");
+    expect(await conn.emitServerRequest(fileChangeReq(threadId))).toEqual({ decision: "accept" });
+    expect(elicitation.asks).toEqual([]);
   });
 
   test("currentTime/read is answered with the real time, not an approval decision", async () => {
