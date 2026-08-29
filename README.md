@@ -1,13 +1,9 @@
-<p align="center">
-  <img src="docs/logo.png" alt="Dragoman" width="360">
-</p>
+![Logo](docs/logo.png)
 
-<h1 align="center">Dragoman</h1>
+#Dragoman
 
-<p align="center">
-  <em>The interpreter between two courts.</em><br>
-  A local bridge that makes OpenAI <strong>Codex</strong> a native-feeling subagent inside Anthropic's <strong>Claude Code</strong>.
-</p>
+> **The interpreter between two courts**
+  A local bridge that makes OpenAI **Codex** a native-feeling subagent inside Anthropic's **Claude Code**.
 
 ---
 
