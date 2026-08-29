@@ -41,7 +41,7 @@ export function buildServer(runs: ThreadRuns): Server {
         return text(await runCodex(runs, args ?? {}));
       case "codex_status":
         return text(await statusCodex(runs, args ?? {}));
-      case "dragoman_diagnostics":
+      case "diagnostics":
         return text(diagnostics());
       default:
         return text(`unknown tool: ${name}`, true);
@@ -102,7 +102,7 @@ const TOOLS = [
     // ground the settings-mirroring design in real data (cwd? which CLAUDE_*
     // env? which settings files reachable?) rather than assumptions. Remove once
     // the mirroring transport is settled.
-    name: "dragoman_diagnostics",
+    name: "diagnostics",
     description: "Diagnostic: report Dragoman's runtime environment (working directory, Claude Code env vars, reachable settings files). Used to design settings mirroring.",
     inputSchema: { type: "object", properties: {} },
   },
