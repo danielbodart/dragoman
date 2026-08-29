@@ -58,7 +58,8 @@ Codex config.
 
 ## Status
 
-**Working.** The mappings above are implemented and verified — unit-tested and
+**WIP.** There are wholes/bugs in the mappings for sure. Auto mode is probably the safest.
+The mappings above are implemented but not perfect— unit-tested and
 locked by live integration tests against real Codex. It installs as a native Claude
 Code **plugin** — a `/dragoman:codex` skill and a `dragoman:codex-agent` subagent
 so Claude reaches for it naturally. Still to come: the fine-grained filesystem rules
