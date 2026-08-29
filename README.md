@@ -37,6 +37,15 @@ approval, mode, permissions and progress flows onto Claude Code's own native mec
 them onto Codex per turn. It only asks you a question when Claude's own policy can't answer — and when it
 does, it uses Claude's native approval prompt.
 
+## Status
+
+**WIP.** There are holes/bugs in the mappings for sure. Auto mode is probably the safest.
+The mappings below are implemented but not perfect— unit-tested and
+locked by live integration tests against real Codex. It installs as a native Claude
+Code **plugin** — a `/dragoman:codex` skill and a `dragoman:codex-agent` subagent
+so Claude reaches for it naturally. Still to come: the fine-grained filesystem rules
+and model-answered approvals. See [`docs/PLAN.md`](docs/PLAN.md).
+
 ## What's mapped
 
 | Claude Code | → Codex | Status |
@@ -55,15 +64,6 @@ does, it uses Claude's native approval prompt.
 Mirroring runs against an **isolated `CODEX_HOME`** (auth inherited from `~/.codex`,
 config = your config + a managed profile block), so it never touches your real
 Codex config.
-
-## Status
-
-**WIP.** There are holes/bugs in the mappings for sure. Auto mode is probably the safest.
-The mappings above are implemented but not perfect— unit-tested and
-locked by live integration tests against real Codex. It installs as a native Claude
-Code **plugin** — a `/dragoman:codex` skill and a `dragoman:codex-agent` subagent
-so Claude reaches for it naturally. Still to come: the fine-grained filesystem rules
-and model-answered approvals. See [`docs/PLAN.md`](docs/PLAN.md).
 
 ## Install
 
