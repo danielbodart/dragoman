@@ -74,30 +74,62 @@ piece, its own doc, its own tests:
 | **Scope** | `sandbox.enabled` (+ plan intent) | profile `extends` / `sandboxPolicy` type | this doc |
 | **Filesystem** | `sandbox.filesystem.{allow,deny}{Read,Write}` | profile `[…].filesystem` table | [`FILESYSTEM-MAPPING.md`](FILESYSTEM-MAPPING.md) |
 | **Network** | `sandbox.network.*` + `WebFetch(domain:)` rules | profile `[…].network` | _(to write)_ |
-| **Approval** | permission `mode` | `approvalPolicy` + `approvalsReviewer` | _(to write — pending steer)_ |
+| **Approval** | permission `mode` | `approvalPolicy` + `approvalsReviewer` | _(to write — `auto → auto_review` locked)_ |
 | **Exec rules** | `Bash(...)` allow/deny rules | execpolicy amendments + pre-declines | _(exists in `mirror.ts`)_ |
 
-### Scope is derived, not looked up (the core correction)
+### Two orthogonal layers (the core correction)
 
-Claude's **permission mode** and Claude's **OS sandbox** are orthogonal axes. The
-old code conflated them (`baseFor(mode)`). They separate cleanly:
+Claude has two **independent** axes, and Codex mirrors each onto its own. The old
+code conflated them (`baseFor(mode)` derived OS scope from the *mode*).
 
-- **Sandbox config → OS scope.**
-  - `sandbox.enabled` falsy (the common local case) → Claude imposes no OS
-    sandbox, so Codex gets **`dangerFullAccess`** (write anywhere, open network).
-    Mirroring more restrictively than Claude is the one direction we never go.
-  - `sandbox.enabled` true → scope `:workspace`, and the `filesystem` / `network`
-    tables mirror `sandbox.filesystem` / `sandbox.network` precisely.
-  - `plan` is a read-only *intent* → `:read-only` regardless of sandbox config.
-- **Mode → approval only.** `mode` picks `approvalPolicy` (+ `approvalsReviewer`);
-  it never picks the OS scope.
+**1. Permission mode → prompting.** The mode governs whether Claude asks before an
+action — for **both tool calls and bash**. `ask`/`default` prompts every time;
+`acceptEdits` auto-approves edits, asks for the rest; `auto` model-judges;
+`bypass`/`dontAsk` never ask; `plan` is read-only intent. → Codex's
+**`approvalPolicy` (+ `approvalsReviewer`)**, plus `allow`/`deny` rules as
+execpolicy allow-prefixes / pre-declines.
 
-### Network: hints are not a fence
+**2. Sandbox → OS confinement of the bash/terminal space only.** Claude's sandbox
+confines **bash**; it never touches tool calls. → Codex's **`sandboxPolicy` scope
++ filesystem/network tables**.
 
-`WebFetch(domain:…)` allow rules are Claude **auto-approve hints**, not a global
-restriction — under no sandbox, Claude's own tools reach any host. So domains form
-a closed allowlist **only when Claude is actually sandboxing**. Unsandboxed →
-network open, no allowlist synthesized from hints.
+They compose, and **sandbox-off is NOT `dangerFullAccess`.** `dangerFullAccess`
+means *no confinement AND no prompting* — that is only `sandbox-off + auto/bypass`.
+`sandbox-off + ask` is **unconfined bash that still prompts every time**.
+
+#### WebFetch is a tool permission, not a network fence
+
+`WebFetch(domain:…)` grants Claude's **WebFetch tool** reach to a host — a channel
+**separate from bash**. With the sandbox on, bash `curl github.com` is blocked yet
+the WebFetch tool still fetches github: the model gets access another way. So these
+rules are tool permissions, **not** Claude's bash-network config, and they do
+**not** map identically to any Codex knob (Codex reaches the network through its
+sandboxed exec, not a distinct fetch tool). The considered translation — "the user
+trusts these hosts, so let Codex's exec reach them too" → a Codex network-*allow* —
+is a cross-channel decision to verify, never an identity, and it must **never**
+become a *fence* that restricts Codex to only those hosts.
+
+#### The mode × sandbox matrix
+
+| Claude mode | sandbox off → `sandboxPolicy` | sandbox on → `sandboxPolicy` | `approvalPolicy` | reviewer |
+|---|---|---|---|---|
+| `plan` | `readOnly` | `readOnly` | untrusted (moot) | user |
+| `default`/ask | `dangerFullAccess`? | `workspaceWrite` + tables | untrusted | user |
+| `acceptEdits` | `dangerFullAccess`? | `workspaceWrite` + tables | on-request / granular | user |
+| `auto` | `dangerFullAccess`? | `workspaceWrite` + tables | on-request | **`auto_review`** |
+| `bypass`/`dontAsk` | `dangerFullAccess` | `dangerFullAccess` | never | — |
+
+`auto` uses **`auto_review`** (locked): Codex's model classifies escalations — the
+closest available analog to Claude's auto classifier, since routing to Claude's own
+model isn't possible (no MCP sampling). Lean into the reviewer classifying rather
+than gating the human. The exact `approvalPolicy` paired with it (on-request vs a
+`granular` shape) is to be mapped and verified.
+
+**The `?` cells are the open verification:** does Codex honour an *asking*
+`approvalPolicy` (untrusted / on-request) together with `sandboxPolicy =
+dangerFullAccess`? If `dangerFullAccess` forces never-ask, then `sandbox-off + ask`
+must instead be `workspaceWrite` with broad writable roots, to keep prompting
+alive. Pin this with the live ratchet before locking those cells — never guess it.
 
 ## Stage 3 — Provision (IO: disk + process)
 
@@ -179,12 +211,14 @@ Codex honours the emitted config.
 
 ## Open
 
-- **Approval axis mapping** — `mode → approvalPolicy + approvalsReviewer`. `auto`'s
-  reviewer is the live design question. Note: routing approvals to *Claude's* model
-  is not available (Claude Code advertises no MCP `sampling`; elicitation is
-  human-only — see the recorded finding), so the choice is Codex-side
-  (`auto_review` / `guardian_subagent`) vs the human elicitation seam.
+- **`dangerFullAccess` × asking approval** — the matrix `?` cells: does Codex still
+  prompt under an asking `approvalPolicy` when the sandbox is `dangerFullAccess`?
+  If not, `sandbox-off + ask` becomes `workspaceWrite` with broad roots. Pin with
+  the live ratchet.
+- **`auto` approvalPolicy** — `auto_review` is locked as the reviewer; the exact
+  `approvalPolicy` (on-request vs a `granular` shape) paired with it is to be
+  mapped and verified for the best classification behaviour.
+- **WebFetch cross-channel mapping** — decide and verify how a Claude WebFetch tool
+  permission translates to Codex's sandboxed-exec network (allow, never fence).
 - **`CodexPolicy` type** — the exact in-memory shape (config-file model + per-turn
   params) the two stages hand across.
-- **Cold-start measurement** — confirm per-run spawn latency is acceptable before
-  deferring caching.
