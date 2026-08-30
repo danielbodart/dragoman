@@ -18,16 +18,21 @@ run = "bunx tsc --noEmit"
 depends = ["install"]
 run = "bun test"
 
-# The version reaches the binary as a build-time define rather than a generated
-# file, so nothing is written into src/ that would then show up as a change.
-# src/version.ts falls back when the define is absent, which is what happens
-# under `bun run src/main.ts`.
+# Bundle the server to a single self-contained JS (deps inlined) run by bun -
+# not a `--compile` native binary, which embedded the whole Bun runtime and made
+# the plugin archive ~116 MB. The version reaches the bundle as a build-time
+# define rather than a generated file, so nothing is written into src/ that
+# would then show up as a change; src/version.ts falls back when the define is
+# absent (e.g. `bun run src/main.ts`).
 [tasks.build]
 depends = ["check"]
 run = '''
 v="$(bun scripts/version.ts)"
-bun build --compile --minify --sourcemap --define "DRAGOMAN_VERSION=\"$v\"" src/main.ts --outfile dist/dragoman
-echo "built dist/dragoman $v"
+# --outdir (not --outfile): bare `--sourcemap` makes `bun build` ignore
+# --outfile and write next to the entrypoint (into src/); --outdir is immune,
+# and --entry-naming keeps the name dragoman.js rather than the entry's main.js.
+bun build --target=bun --minify --sourcemap --entry-naming 'dragoman.[ext]' --define "DRAGOMAN_VERSION=\"$v\"" src/main.ts --outdir dist
+echo "built dist/dragoman.js $v"
 '''
 
 [tasks.package]
@@ -62,13 +67,11 @@ set -euo pipefail
 v="$(bun scripts/version.ts)"
 sha="$(sha256sum dist/dragoman-plugin.zip | awk '{print $1}')"
 
+# The whole plugin rides in the one zip (the marketplace archive source is a
+# single url+sha256), so that is the only release asset.
 gh release create "v$v" \
   --title "v$v" \
-  dist/dragoman-plugin.zip \
-  dist/plugin/bin/dragoman-darwin-arm64 \
-  dist/plugin/bin/dragoman-darwin-x64 \
-  dist/plugin/bin/dragoman-linux-x64 \
-  dist/plugin/bin/dragoman-linux-arm64
+  dist/dragoman-plugin.zip
 
 # Point the marketplace catalog at the new release.
 export V="$v" SHA="$sha"

@@ -1,8 +1,8 @@
 {
   "mcpServers": {
     "dragoman": {
-      "command": "sh",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/bin/dragoman", "serve"]
+      "command": "bun",
+      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/dragoman.js", "serve"]
     }
   }
 }

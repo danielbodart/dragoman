@@ -6,5 +6,6 @@
   "homepage": "https://github.com/danielbodart/dragoman",
   "repository": "https://github.com/danielbodart/dragoman",
   "license": "Apache-2.0",
-  "keywords": ["codex", "openai", "mcp", "subagent", "approvals", "bridge"]
+  "keywords": ["codex", "openai", "mcp", "subagent", "approvals", "bridge"],
+  "hooks": "./hooks.json"
 }

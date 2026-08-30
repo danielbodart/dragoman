@@ -74,9 +74,11 @@ Dragoman is a Claude Code plugin. Add the marketplace and install it:
 /plugin install dragoman@dragoman
 ```
 
-That pulls a single archive carrying the native binary for your platform — **no
-Bun, Node, or build step required**. A tiny launcher picks the right binary at
-runtime. Codex must be on your `PATH` (Dragoman spawns `codex app-server`).
+That pulls a small archive (~280 KB) carrying the server as a single bundled
+JS. It runs with [**Bun**](https://bun.sh) — which must be on your `PATH`
+(a SessionStart hook warns if it is missing) — so there is no per-platform
+binary and no multi-megabyte download. Codex must also be on your `PATH`
+(Dragoman spawns `codex app-server`).
 
 Once installed you get:
 
@@ -90,8 +92,8 @@ Once installed you get:
 ### From source
 
 ```bash
-mise run build                                             # single binary → dist/dragoman
-claude mcp add dragoman -s user -- "$PWD/dist/dragoman" serve
+mise run build                                             # bundle → dist/dragoman.js
+claude mcp add dragoman -s user -- bun "$PWD/dist/dragoman.js" serve
 mise run package                                           # or the full plugin archive → dist/dragoman-plugin.zip
 ```
 
