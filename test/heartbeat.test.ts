@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test";
-import { beatOf, threadIdOf } from "../src/heartbeat.ts";
+import { eventOf, threadIdOf } from "../src/heartbeat.ts";
 import type { Notification } from "../src/codex.ts";
 import type { ThreadItem } from "../generated/codex-protocol/ts/v2/ThreadItem.ts";
 
 /**
  * Minimal ThreadItem builders. The generated variants carry many required fields
- * that the heartbeat filter never reads; these fill them with harmless defaults
- * so a test can state just the field under test (`command`, `changes`, ...).
+ * the heartbeat filter never reads; these fill them with harmless defaults so a
+ * test can state just the field under test (`command`, `changes`, ...).
  */
-function commandItem(command: string): ThreadItem {
+function commandItem(command: string, extra: Partial<Record<string, unknown>> = {}): ThreadItem {
   return {
     type: "commandExecution",
     id: "i1",
@@ -23,6 +23,7 @@ function commandItem(command: string): ThreadItem {
     aggregatedOutput: null,
     exitCode: null,
     durationMs: null,
+    ...extra,
   } as ThreadItem;
 }
 
@@ -30,7 +31,7 @@ function fileChangeItem(paths: string[]): ThreadItem {
   return {
     type: "fileChange",
     id: "i2",
-    changes: paths.map((path) => ({ path, kind: "update", diff: "" })) as never,
+    changes: paths.map((path) => ({ path, kind: { type: "update", move_path: null }, diff: "" })) as never,
     status: "completed",
   } as ThreadItem;
 }
@@ -43,35 +44,42 @@ function itemCompleted(item: ThreadItem, threadId = "t1", at = 1000): Notificati
   return { emittedAtMs: at, method: "item/completed", params: { item, threadId, turnId: "turn1", completedAtMs: at } };
 }
 
-describe("beatOf", () => {
-  test("turn/started is a beat", () => {
-    expect(beatOf({ emittedAtMs: 5, method: "turn/started", params: { threadId: "t1", turn: turn("inProgress") } }))
-      .toEqual({ at: 5, text: "starting turn" });
+describe("eventOf", () => {
+  test("turn/started is not a timeline event (status covers it)", () => {
+    expect(eventOf({ emittedAtMs: 5, method: "turn/started", params: { threadId: "t1", turn: turn("inProgress") } }))
+      .toBeUndefined();
   });
 
-  test("a started command execution names the command", () => {
-    expect(beatOf(itemStarted(commandItem("cargo test")))).toEqual({ at: 1000, text: "running: cargo test" });
+  test("a started command carries the command as its own field, phase 'running'", () => {
+    expect(eventOf(itemStarted(commandItem("cargo test"))))
+      .toEqual({ kind: "command", at: 1000, phase: "running", command: "cargo test", status: "inProgress" });
   });
 
-  test("a completed command execution reads 'ran'", () => {
-    const at = 2000;
-    const n: Notification = { emittedAtMs: at, method: "item/completed", params: { item: commandItem("ls"), threadId: "t1", turnId: "turn1", completedAtMs: at } };
-    expect(beatOf(n)).toEqual({ at, text: "ran: ls" });
+  test("a completed command reads phase 'ran' and surfaces exit code + duration", () => {
+    const item = commandItem("ls", { status: "completed", exitCode: 0, durationMs: 42 });
+    expect(eventOf(itemCompleted(item, "t1", 2000)))
+      .toEqual({ kind: "command", at: 2000, phase: "ran", command: "ls", status: "completed", exitCode: 0, durationMs: 42 });
   });
 
-  test("a file change names the file(s), on completion only (not the start)", () => {
-    // The start of an edit is not a beat — only its completion, to avoid a start+done pair.
-    expect(beatOf(itemStarted(fileChangeItem(["src/a.ts"])))).toBeUndefined();
-    expect(beatOf(itemCompleted(fileChangeItem(["src/a.ts"])))).toEqual({ at: 1000, text: "edited a.ts" });
-    expect(beatOf(itemCompleted(fileChangeItem(["a.ts", "b.ts"])))).toEqual({ at: 1000, text: "edited a.ts, b.ts" });
-    expect(beatOf(itemCompleted(fileChangeItem(["a", "b", "c", "d", "e"])))).toEqual({ at: 1000, text: "edited a, b, c +2 more" });
+  test("a file change lists each file by path + change kind, on completion only", () => {
+    // The start of an edit is not an event — only its completion, to avoid a start+done pair.
+    expect(eventOf(itemStarted(fileChangeItem(["src/a.ts"])))).toBeUndefined();
+    expect(eventOf(itemCompleted(fileChangeItem(["src/a.ts", "b.ts"]))))
+      .toEqual({ kind: "edit", at: 1000, status: "completed", files: [{ path: "src/a.ts", change: "update" }, { path: "b.ts", change: "update" }] });
   });
 
-  test("turn/completed distinguishes success from failure", () => {
-    expect(beatOf({ method: "turn/completed", params: { threadId: "t1", turn: turn("completed") }, emittedAtMs: 9 }))
-      .toEqual({ at: 9, text: "turn complete" });
-    expect(beatOf({ method: "turn/completed", params: { threadId: "t1", turn: turn("failed") }, emittedAtMs: 9 }))
-      .toEqual({ at: 9, text: "turn failed" });
+  test("a web search surfaces the query (no longer flattened to 'searching the web')", () => {
+    const search = { type: "webSearch", id: "w1", query: "rust async traits", action: { type: "search", query: "rust async traits", queries: null }, results: null } as ThreadItem;
+    expect(eventOf(itemStarted(search))).toEqual({ kind: "webSearch", at: 1000, query: "rust async traits", action: "search" });
+    // Only on start — the completion of the same search adds nothing new.
+    expect(eventOf(itemCompleted(search))).toBeUndefined();
+  });
+
+  test("an mcp tool call carries server, tool, status and any error", () => {
+    const ok = { type: "mcpToolCall", id: "m1", server: "linear", tool: "list_issues", status: "completed", arguments: {}, appContext: null, pluginId: null, readOnlyHint: null, result: null, error: null, durationMs: 88 } as ThreadItem;
+    expect(eventOf(itemCompleted(ok))).toEqual({ kind: "mcpTool", at: 1000, server: "linear", tool: "list_issues", status: "completed", durationMs: 88 });
+    const failed = { ...ok, status: "failed", error: { message: "boom" }, durationMs: null } as ThreadItem;
+    expect(eventOf(itemCompleted(failed))).toEqual({ kind: "mcpTool", at: 1000, server: "linear", tool: "list_issues", status: "failed", error: "boom" });
   });
 
   test("a completed auto-approval surfaces the decision, risk and action", () => {
@@ -85,10 +93,10 @@ describe("beatOf", () => {
         action: { type: "command", source: "agent", command: 'echo "hi"', cwd: "/repo" },
       } as never,
     };
-    expect(beatOf(n)).toEqual({ at: 3000, text: 'auto-approved (risk: low): echo "hi"' });
+    expect(eventOf(n)).toEqual({ kind: "autoApproval", at: 3000, decision: "approved", risk: "low", action: 'echo "hi"' });
   });
 
-  test("a denied auto-approval reads 'auto-denied' and drops absent risk", () => {
+  test("a denied auto-approval drops absent risk and summarises the action", () => {
     const n: Notification = {
       emittedAtMs: 3000,
       method: "item/autoApprovalReview/completed",
@@ -99,46 +107,23 @@ describe("beatOf", () => {
         action: { type: "networkAccess", target: "https://x.com", host: "x.com", protocol: "https", port: 443 },
       } as never,
     };
-    expect(beatOf(n)).toEqual({ at: 3000, text: "auto-denied: network x.com:443" });
+    expect(eventOf(n)).toEqual({ kind: "autoApproval", at: 3000, decision: "denied", action: "network x.com:443" });
   });
 
-  test("a timed-out auto-approval reads naturally", () => {
-    const n: Notification = {
-      emittedAtMs: 3000,
-      method: "item/autoApprovalReview/completed",
-      params: {
-        threadId: "t1", turnId: "turn1", startedAtMs: 2999, completedAtMs: 3000,
-        reviewId: "rev1", targetItemId: "exec-1", decisionSource: "agent",
-        review: { status: "timedOut", riskLevel: "high", userAuthorization: "unknown", rationale: null },
-        action: { type: "applyPatch", cwd: "/repo", files: ["/repo/a", "/repo/b"] },
-      } as never,
-    };
-    expect(beatOf(n)).toEqual({ at: 3000, text: "auto-review timed out (risk: high): patch 2 file(s)" });
-  });
-
-  test("an error notification surfaces the message", () => {
-    const n: Notification = {
-      emittedAtMs: 7,
-      method: "error",
-      params: { error: { message: "boom", codexErrorInfo: null, additionalDetails: null }, willRetry: false, threadId: "t1", turnId: "turn1" },
-    };
-    expect(beatOf(n)).toEqual({ at: 7, text: "error: boom" });
-  });
-
-  test("the firehose (token deltas etc.) produces no beat", () => {
+  test("the firehose (token deltas etc.) produces no event", () => {
     const delta: Notification = { emittedAtMs: 1, method: "item/agentMessage/delta", params: { delta: "hel" } as never };
-    expect(beatOf(delta)).toBeUndefined();
+    expect(eventOf(delta)).toBeUndefined();
   });
 
   test("a reasoning item is not a milestone", () => {
     const reasoning = { type: "reasoning", id: "r1", summary: [], content: [] } as ThreadItem;
-    expect(beatOf(itemStarted(reasoning))).toBeUndefined();
+    expect(eventOf(itemStarted(reasoning))).toBeUndefined();
   });
 
   test("falls back to now when emittedAtMs is absent", () => {
     const before = Date.now();
-    const beat = beatOf({ method: "turn/started", params: { threadId: "t1", turn: turn("inProgress") } });
-    expect(beat!.at).toBeGreaterThanOrEqual(before);
+    const event = eventOf({ method: "item/started", params: { item: commandItem("ls"), threadId: "t1", turnId: "turn1", startedAtMs: 0 } });
+    expect(event!.at).toBeGreaterThanOrEqual(before);
   });
 });
 

@@ -151,7 +151,8 @@ export async function settle(runs: ThreadRuns, handle: string, timeoutMs = 120_0
 export function resultText(snapshot: RunSnapshot): string {
   for (let i = snapshot.events.length - 1; i >= 0; i--) {
     const event = snapshot.events[i]!;
-    if (event.kind === "result" || event.kind === "error") return event.text;
+    if (event.kind === "result") return event.text ?? "";
+    if (event.kind === "error") return event.message;
   }
   return "";
 }

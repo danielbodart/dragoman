@@ -16,8 +16,29 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { diagnostics } from "./diagnostics.ts";
 import type { ThreadRuns } from "./thread-run.ts";
+import type { RunEvent, RunStatus, RunUsage } from "./model.ts";
 import type { ReviewTarget } from "../generated/codex-protocol/ts/v2/ReviewTarget.ts";
 import { version } from "./version.ts";
+
+/**
+ * A `codex_status` payload — the run's live state as STRUCTURED data, returned
+ * verbatim as `structuredContent`. `events` are the milestones drained this poll
+ * (typed, never a prose line the caller has to parse); `usage` is the percentage
+ * snapshot (5h / weekly rate-limit windows + this thread's context occupancy).
+ */
+export interface StatusResult {
+  readonly handle: string;
+  readonly status: RunStatus;
+  readonly usage: RunUsage;
+  readonly events: readonly RunEvent[];
+}
+
+/** An acknowledgement for the action tools (run/steer/cancel/continue/review):
+ * the handle to poll plus a one-line human message. */
+interface AckResult {
+  readonly handle?: string;
+  readonly message: string;
+}
 
 /**
  * Build the MCP server and register the tools against a run registry.
@@ -39,21 +60,21 @@ export function buildServer(runs: ThreadRuns): Server {
     const { name, arguments: args } = request.params;
     switch (name) {
       case "codex_run":
-        return text(await runCodex(runs, args ?? {}));
+        return result(await runCodex(runs, args ?? {}));
       case "codex_status":
-        return text(await statusCodex(runs, args ?? {}));
+        return result(await statusCodex(runs, args ?? {}));
       case "codex_steer":
-        return text(await steerCodex(runs, args ?? {}));
+        return result(await steerCodex(runs, args ?? {}));
       case "codex_cancel":
-        return text(await cancelCodex(runs, args ?? {}));
+        return result(await cancelCodex(runs, args ?? {}));
       case "codex_continue":
-        return text(await continueCodex(runs, args ?? {}));
+        return result(await continueCodex(runs, args ?? {}));
       case "codex_review":
-        return text(await reviewCodex(runs, args ?? {}));
+        return result(await reviewCodex(runs, args ?? {}));
       case "diagnostics":
-        return text(diagnostics(runs));
+        return result({ report: diagnostics(runs) });
       default:
-        return text(`unknown tool: ${name}`, true);
+        return result({ error: `unknown tool: ${name}` }, true);
     }
   });
 
@@ -82,6 +103,15 @@ export async function serve(server: Server): Promise<void> {
   await closed;
 }
 
+/**
+ * A permissive output schema declared on every tool. Its presence is what makes a
+ * client surface `structuredContent` (verified empirically against Claude Code);
+ * it intentionally constrains nothing — each tool's real shape is its TS type
+ * (`StatusResult` / `AckResult` / the diagnostics report), and the payload always
+ * reaches the model as structuredContent regardless of the individual fields.
+ */
+const STRUCTURED_OUTPUT = { type: "object" } as const;
+
 const TOOLS = [
   {
     name: "codex_run",
@@ -108,6 +138,7 @@ const TOOLS = [
       },
       required: ["prompt", "cwd"],
     },
+    outputSchema: STRUCTURED_OUTPUT,
   },
   {
     // Dragoman's ground-truth observability probe: what the MCP subprocess
@@ -118,6 +149,7 @@ const TOOLS = [
     description:
       "Report Dragoman's runtime state: live Codex runs (status, active turn, latest milestone), the working directory, Claude Code env vars, reachable settings files, and the mirror preview (what those settings would apply to Codex per posture). Use it to see what a run is doing or why a mirror resolved as it did.",
     inputSchema: { type: "object", properties: {} },
+    outputSchema: STRUCTURED_OUTPUT,
   },
   {
     name: "codex_status",
@@ -127,6 +159,7 @@ const TOOLS = [
       properties: { handle: { type: "string", description: "The handle codex_run returned." } },
       required: ["handle"],
     },
+    outputSchema: STRUCTURED_OUTPUT,
   },
   {
     name: "codex_steer",
@@ -142,6 +175,7 @@ const TOOLS = [
       },
       required: ["handle", "text"],
     },
+    outputSchema: STRUCTURED_OUTPUT,
   },
   {
     name: "codex_cancel",
@@ -153,6 +187,7 @@ const TOOLS = [
       properties: { handle: { type: "string", description: "The handle codex_run returned." } },
       required: ["handle"],
     },
+    outputSchema: STRUCTURED_OUTPUT,
   },
   {
     name: "codex_review",
@@ -183,6 +218,7 @@ const TOOLS = [
       },
       required: ["cwd"],
     },
+    outputSchema: STRUCTURED_OUTPUT,
   },
   {
     name: "codex_continue",
@@ -206,42 +242,43 @@ const TOOLS = [
       },
       required: ["handle", "prompt"],
     },
+    outputSchema: STRUCTURED_OUTPUT,
   },
 ] as const;
 
-async function runCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<string> {
+async function runCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<AckResult> {
   const prompt = String(args.prompt ?? "");
   const cwd = String(args.cwd ?? "");
   const posture = typeof args.posture === "string" ? args.posture : undefined;
-  if (!prompt || !cwd) return "codex_run needs both `prompt` and `cwd`.";
+  if (!prompt || !cwd) return { message: "codex_run needs both `prompt` and `cwd`." };
   const handle = await runs.start(prompt, cwd, posture);
-  return `Started Codex task. Poll codex_status with handle "${handle}".`;
+  return { handle, message: `Started Codex task. Poll codex_status with handle "${handle}".` };
 }
 
-async function steerCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<string> {
+async function steerCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<AckResult> {
   const handle = String(args.handle ?? "");
   const text = String(args.text ?? "");
-  if (!handle || !text) return "codex_steer needs both `handle` and `text`.";
-  return runs.steer(handle, text);
+  if (!handle || !text) return { message: "codex_steer needs both `handle` and `text`." };
+  return { handle, message: await runs.steer(handle, text) };
 }
 
-async function cancelCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<string> {
+async function cancelCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<AckResult> {
   const handle = String(args.handle ?? "");
-  if (!handle) return "codex_cancel needs a `handle`.";
-  return runs.cancel(handle);
+  if (!handle) return { message: "codex_cancel needs a `handle`." };
+  return { handle, message: await runs.cancel(handle) };
 }
 
-async function continueCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<string> {
+async function continueCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<AckResult> {
   const handle = String(args.handle ?? "");
   const prompt = String(args.prompt ?? "");
   const posture = typeof args.posture === "string" ? args.posture : undefined;
-  if (!handle || !prompt) return "codex_continue needs both `handle` and `prompt`.";
-  return runs.continueRun(handle, prompt, posture);
+  if (!handle || !prompt) return { message: "codex_continue needs both `handle` and `prompt`." };
+  return { handle, message: await runs.continueRun(handle, prompt, posture) };
 }
 
-async function reviewCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<string> {
+async function reviewCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<AckResult> {
   const cwd = String(args.cwd ?? "");
-  if (!cwd) return "codex_review needs a `cwd`.";
+  if (!cwd) return { message: "codex_review needs a `cwd`." };
   const posture = typeof args.posture === "string" ? args.posture : undefined;
   const instructions = typeof args.instructions === "string" && args.instructions ? args.instructions : undefined;
   const against = typeof args.against === "string" && args.against ? args.against : undefined;
@@ -252,7 +289,7 @@ async function reviewCodex(runs: ThreadRuns, args: Record<string, unknown>): Pro
       ? { type: "baseBranch", branch: against }
       : { type: "uncommittedChanges" };
   const handle = await runs.review(cwd, target, posture);
-  return `Started Codex review. Poll codex_status with handle "${handle}".`;
+  return { handle, message: `Started Codex review. Poll codex_status with handle "${handle}".` };
 }
 
 /** How long a single codex_status call blocks waiting for progress, before it returns
@@ -263,15 +300,15 @@ async function reviewCodex(runs: ThreadRuns, args: Record<string, unknown>): Pro
  * fully-quiet run; well under Claude Code's ~120s tool-call ceiling. */
 const STATUS_LONGPOLL_MS = 30_000;
 
-async function statusCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<string> {
+async function statusCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<StatusResult | { error: string }> {
   const handle = String(args.handle ?? "");
-  if (!runs.status(handle)) return `No Codex task with handle "${handle}".`;
+  if (!runs.status(handle)) return { error: `No Codex task with handle "${handle}".` };
 
   // Long-poll unless there is already something undelivered: block until the run
   // advances past its current revision (or is terminal), so this returns the
   // instant Codex makes progress rather than on a fixed interval. If events are
   // already buffered we skip the wait and hand them over now — never leaving one
-  // sitting until the next bump. Times out to a "still running" line the caller
+  // sitting until the next bump. Times out to a "still running" snapshot the caller
   // re-polls, staying under the tool-call ceiling.
   if (!runs.hasPending(handle)) {
     const since = runs.revision(handle);
@@ -279,41 +316,28 @@ async function statusCodex(runs: ThreadRuns, args: Record<string, unknown>): Pro
   }
 
   const run = runs.status(handle);
-  if (!run) return `No Codex task with handle "${handle}".`;
+  if (!run) return { error: `No Codex task with handle "${handle}".` };
 
-  // Drain the one timeline — every event (progress, approval, terminal outcome),
-  // whatever its source, delivered exactly once, in order.
-  const events = runs.drain(handle);
-  switch (run.status) {
-    case "starting":
-    case "running":
-      return line("Running", events, "—");
-    case "waiting-approval":
-      return line("Waiting for your approval", events, "—");
-    case "done":
-      return line("Done", events, ".");
-    case "error":
-      return line("Errored", events, ".");
-  }
+  // Drain the one timeline — every event (tool milestone, approval, Codex message,
+  // terminal outcome), whatever its source, delivered exactly once, in order — and
+  // hand it back as structured data alongside the run's status and usage snapshot.
+  return { handle, status: run.status, usage: runs.usage(handle), events: runs.drain(handle) };
 }
 
 /**
- * Render a status from the events drained this poll — the same shape whatever the
- * state, because they all come off one timeline. Nothing drained → the bare state
- * line (either nothing advanced, or a terminal outcome already delivered on an
- * earlier poll). One event → the compact `Prefix<join> text` form (`—` for in-flight
- * progress, `.` for a terminal outcome). Several (they piled up between polls) → the
- * prefix over a bulleted list, oldest first, so a superseded event is still seen.
+ * Wrap a structured payload as an MCP tool result.
+ *
+ * Dragoman is 100% structured: the payload rides `structuredContent` (which
+ * Claude Code surfaces to the model — verified empirically), and `content` carries
+ * the SAME object serialized, only so the result stays a valid MCP frame and any
+ * non-Claude client still receives the data. There is no separately-authored human
+ * text: the struct is the single source of truth, and the serialized form is a
+ * mechanical mirror of it, never a hand-maintained second rendering.
  */
-function line(prefix: string, events: readonly { text: string }[], join: "—" | "."): string {
-  if (events.length === 0) return `${prefix}.`;
-  if (events.length === 1) {
-    return join === "—" ? `${prefix} — ${events[0]!.text}.` : `${prefix}. ${events[0]!.text}`;
-  }
-  return `${prefix}:\n${events.map((e) => `  • ${e.text}`).join("\n")}`;
-}
-
-/** Wrap a string as an MCP tool result. */
-function text(value: string, isError = false): { content: { type: "text"; text: string }[]; isError?: boolean } {
-  return { content: [{ type: "text", text: value }], ...(isError ? { isError: true } : {}) };
+function result(structured: object, isError = false) {
+  return {
+    content: [{ type: "text" as const, text: JSON.stringify(structured) }],
+    structuredContent: structured as Record<string, unknown>,
+    ...(isError ? { isError: true } : {}),
+  };
 }

@@ -21,11 +21,13 @@
  *     dropped by construction (never a beat); codex_status drains it in order, so
  *     no milestone is lost even when two land between polls.
  */
-import { beatOf, threadIdOf } from "./heartbeat.ts";
+import { eventOf, threadIdOf } from "./heartbeat.ts";
 import type { AppServerConn, Notification, ServerRequest } from "./codex.ts";
 import type { ElicitationChannel } from "./elicitation.ts";
-import type { RunRecord } from "./model.ts";
+import type { RunRecord, RunUsage } from "./model.ts";
 import type { ThreadRuns } from "./thread-run.ts";
+import type { ThreadTokenUsage } from "../generated/codex-protocol/ts/v2/ThreadTokenUsage.ts";
+import type { RateLimitSnapshot } from "../generated/codex-protocol/ts/v2/RateLimitSnapshot.ts";
 import type { CommandExecutionRequestApprovalParams } from "../generated/codex-protocol/ts/v2/CommandExecutionRequestApprovalParams.ts";
 import type { FileChangeRequestApprovalParams } from "../generated/codex-protocol/ts/v2/FileChangeRequestApprovalParams.ts";
 import type { PermissionsRequestApprovalParams } from "../generated/codex-protocol/ts/v2/PermissionsRequestApprovalParams.ts";
@@ -104,7 +106,7 @@ function raiseApproval(runs: ThreadRuns, threadId: string, what: string): void {
   const run = runs.record(threadId);
   if (!run) return;
   run.status = "waiting-approval";
-  runs.append(threadId, { at: Date.now(), kind: "progress", text: `waiting for your approval: ${what}` });
+  runs.append(threadId, { at: Date.now(), kind: "approval", phase: "waiting", what });
   runs.bump(threadId);
 }
 
@@ -113,8 +115,7 @@ function resolveApproval(runs: ThreadRuns, threadId: string, decision: string, w
   const run = runs.record(threadId);
   if (!run) return;
   if (run.status === "waiting-approval") run.status = "running";
-  const verb = decision === "accept" || decision === "acceptForSession" ? "you approved" : `you chose ${decision} for`;
-  runs.append(threadId, { at: Date.now(), kind: "progress", text: `${verb}: ${what}` });
+  runs.append(threadId, { at: Date.now(), kind: "approval", phase: "resolved", what, decision });
   runs.bump(threadId);
 }
 
@@ -379,8 +380,17 @@ async function runNotifications(conn: AppServerConn, runs: ThreadRuns, signal?: 
   }
 }
 
-/** Route one notification to its run and fold in its beat / terminal status. */
+/** Route one notification to its run and fold in its structured event / status. */
 function apply(notification: Notification, runs: ThreadRuns): void {
+  // Account rate limits are FEED-WIDE (no threadId) and shared by every run — fold
+  // them into the registry-level snapshot before any run routing, and wake every
+  // live run so a parked status poll picks up the fresh window percentages.
+  if (notification.method === "account/rateLimits/updated") {
+    runs.mergeAccountLimits(limitsFrom(notification.params.rateLimits));
+    for (const handle of runs.handles()) runs.bump(handle);
+    return;
+  }
+
   const run = runFor(notification, runs);
   if (!run) return;
 
@@ -388,29 +398,38 @@ function apply(notification: Notification, runs: ThreadRuns): void {
   const at = notification.emittedAtMs ?? Date.now();
   let changed = false;
 
-  const terminal = notification.method === "turn/completed" || notification.method === "error";
-
-  // Progress milestones from the firehose become `progress` events — EXCEPT the
-  // terminal notifications, whose outcome is appended below as its own richer event
-  // (so beatOf's coarse "turn complete" doesn't duplicate the result line). Append,
-  // don't overwrite: codex_status drains in order, so a beat instantly superseded
-  // (an auto-approval between `running:` and `ran:`) is still delivered.
-  if (!terminal) {
-    const beat = beatOf(notification);
-    if (beat) {
-      runs.append(handle, { at: beat.at, kind: "progress", text: beat.text });
+  // This thread's context-window occupancy — latest-wins telemetry, not a timeline
+  // event. Folded onto the record so codex_status reports it alongside the rate limits.
+  if (notification.method === "thread/tokenUsage/updated") {
+    const ctx = ctxPercentOf(notification.params.tokenUsage);
+    if (ctx !== undefined) {
+      run.ctx = ctx;
       changed = true;
     }
   }
 
-  // Codex's own words mid-run — an agentMessage item completing — are its
-  // back-channel to the driving agent (docs/archive/peer-agent-lifecycle.md): surface them as `message`
-  // events so a note Codex emits reaches the agent on its next poll. The FINAL
-  // message also rides turn/completed as the `result`; the dedupe there upgrades a
-  // just-streamed final message in place rather than delivering it twice.
+  const terminal = notification.method === "turn/completed" || notification.method === "error";
+
+  // Tool milestones from the firehose become structured events — EXCEPT the terminal
+  // notifications, whose outcome is appended below as its own richer event. Append,
+  // don't overwrite: codex_status drains in order, so an event instantly superseded
+  // (an auto-approval between a command's `running` and `ran`) is still delivered.
+  if (!terminal) {
+    const event = eventOf(notification);
+    if (event) {
+      runs.append(handle, event);
+      changed = true;
+    }
+  }
+
+  // Codex's own words mid-run — an agentMessage item completing — are its back-channel
+  // to the driving agent (docs/archive/peer-agent-lifecycle.md): surface them as the
+  // one free-text `message` kind, carrying the source's phase. The FINAL message also
+  // rides turn/completed as the `result`; the dedupe there upgrades a just-streamed
+  // final message in place rather than delivering it twice.
   const message = agentMessageOf(notification);
   if (message) {
-    runs.append(handle, { at, kind: "message", text: message });
+    runs.append(handle, { at, kind: "message", text: message.text, ...(message.phase ? { phase: message.phase } : {}) });
     changed = true;
   }
 
@@ -423,34 +442,58 @@ function apply(notification: Notification, runs: ThreadRuns): void {
 
   if (notification.method === "turn/completed") {
     const turn = notification.params.turn;
+    const durationMs = turn.durationMs ?? undefined;
     if (turn.status === "failed") {
       run.status = "error";
-      runs.append(handle, { at, kind: "error", text: turn.error?.message ?? "turn failed" });
+      runs.append(handle, { at, kind: "error", message: turn.error?.message ?? "turn failed", ...(turn.error?.additionalDetails ? { details: turn.error.additionalDetails } : {}) });
     } else {
       // `completed` or `interrupted` (a cancel) both settle the run; the final
-      // assistant message, if any, is the outcome event.
+      // assistant message, if any, rides the terminal `result` event.
       run.status = "done";
       const result = lastAgentMessage(turn);
-      if (result) {
-        const tail = run.events.at(-1);
-        if (tail && tail.kind === "message" && tail.text === result) {
-          // The final message just streamed as a `message` this same poll — reclassify
-          // it as the result rather than delivering the same text twice.
-          run.events[run.events.length - 1] = { ...tail, kind: "result" };
-        } else {
-          runs.append(handle, { at, kind: "result", text: result });
-        }
+      const base = { kind: "result" as const, at, status: turn.status, ...(durationMs != null ? { durationMs } : {}) };
+      const tail = run.events.at(-1);
+      if (result?.text && tail && tail.kind === "message" && tail.text === result.text) {
+        // The final message just streamed as a `message` this same poll — reclassify
+        // it as the result rather than delivering the same text twice.
+        run.events[run.events.length - 1] = { ...base, at: tail.at, text: result.text };
+      } else {
+        runs.append(handle, { ...base, ...(result?.text ? { text: result.text } : {}) });
       }
     }
     changed = true;
   } else if (notification.method === "error") {
     run.status = "error";
-    runs.append(handle, { at, kind: "error", text: notification.params.error.message });
+    runs.append(handle, { at, kind: "error", message: notification.params.error.message, ...(notification.params.error.additionalDetails ? { details: notification.params.error.additionalDetails } : {}) });
     changed = true;
   }
 
   // Wake any long-poll waiting on this run — the write itself is the signal.
   if (changed) runs.bump(handle);
+}
+
+/**
+ * A rate-limit snapshot's two windows as percentages, keyed by duration: the
+ * shorter window is the `5h` bucket, the longer the `7d`. Codex reports them
+ * positionally (primary/secondary), but we classify by `windowDurationMins` so a
+ * reordering upstream can't mislabel them. A sparse update may carry only one.
+ */
+function limitsFrom(snapshot: RateLimitSnapshot): RunUsage {
+  const windows = [snapshot.primary, snapshot.secondary]
+    .filter((w): w is NonNullable<typeof w> => w != null)
+    .sort((a, b) => (a.windowDurationMins ?? 0) - (b.windowDurationMins ?? 0));
+  const usage: { "5h"?: number; "7d"?: number } = {};
+  if (windows[0]) usage["5h"] = Math.round(windows[0].usedPercent);
+  if (windows[1]) usage["7d"] = Math.round(windows[1].usedPercent);
+  return usage;
+}
+
+/** This thread's context occupancy as a percentage of the model's window, or
+ * undefined when the window size is unknown (can't compute a percentage). */
+function ctxPercentOf(usage: ThreadTokenUsage): number | undefined {
+  const window = usage.modelContextWindow;
+  if (window == null || window <= 0) return undefined;
+  return Math.round((usage.total.totalTokens / window) * 100);
 }
 
 /**
@@ -468,22 +511,32 @@ function runFor(notification: Notification, runs: ThreadRuns): RunRecord | undef
   return handles.length === 1 ? runs.record(handles[0]!) : undefined;
 }
 
+/** A Codex message plus the source's own phase (commentary vs. final_answer). */
+interface AgentMessage {
+  readonly text: string;
+  readonly phase?: "commentary" | "final_answer";
+}
+
 /**
  * Codex's own message from a completing `agentMessage` item — its mid-run
  * back-channel to the driving agent — or undefined for any other notification.
  * The final one also arrives inside turn/completed as the result; apply() dedupes.
  */
-function agentMessageOf(notification: Notification): string | undefined {
+function agentMessageOf(notification: Notification): AgentMessage | undefined {
   if (notification.method !== "item/completed") return undefined;
   const item = notification.params.item;
-  return item.type === "agentMessage" ? item.text ?? undefined : undefined;
+  if (item.type !== "agentMessage" || !item.text) return undefined;
+  return { text: item.text, ...(item.phase ? { phase: item.phase } : {}) };
 }
 
 /** The final assistant message in a completed turn, if any, as the run's result. */
-function lastAgentMessage(turn: { items: readonly { type: string }[] }): string | undefined {
+function lastAgentMessage(turn: { items: readonly { type: string }[] }): AgentMessage | undefined {
   for (let i = turn.items.length - 1; i >= 0; i--) {
     const item = turn.items[i]!;
-    if (item.type === "agentMessage") return (item as { text?: string }).text;
+    if (item.type === "agentMessage") {
+      const message = item as { text?: string; phase?: "commentary" | "final_answer" | null };
+      return message.text ? { text: message.text, ...(message.phase ? { phase: message.phase } : {}) } : undefined;
+    }
   }
   return undefined;
 }

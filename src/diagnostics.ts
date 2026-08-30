@@ -19,6 +19,7 @@ import { join } from "node:path";
 import { mirror, resolveMode } from "./mirror.ts";
 import { readSettings } from "./settings.ts";
 import type { ThreadRuns } from "./thread-run.ts";
+import type { RunEvent } from "./model.ts";
 import { version } from "./version.ts";
 
 /**
@@ -131,10 +132,39 @@ function activeRuns(runs?: ThreadRuns): string {
     // The last undrained event, if any — a poll may have already drained the log,
     // so this is best-effort colour on top of the authoritative `status`.
     const last = run.events.at(-1);
-    const beat = last ? ` — ${last.text}` : "";
-    lines.push(`  [${run.status}] ${handle}${turn}${beat}`);
+    const beat = last ? ` — ${eventLabel(last)}` : "";
+    const ctx = run.ctx !== undefined ? ` ctx=${run.ctx}%` : "";
+    lines.push(`  [${run.status}] ${handle}${turn}${ctx}${beat}`);
   }
   return lines.join("\n");
+}
+
+/** A short operator-facing label for one structured event — the diagnostics dump
+ * is human text, so it renders the timeline's last event to a one-liner here (the
+ * MCP tools return the events structured; this is only the debug view). */
+function eventLabel(event: RunEvent): string {
+  switch (event.kind) {
+    case "command":
+      return `${event.phase}: ${event.command}`;
+    case "edit":
+      return `edited ${event.files.map((f) => f.path).join(", ")}`;
+    case "webSearch":
+      return `web search${event.query ? `: ${event.query}` : ""}`;
+    case "mcpTool":
+      return `${event.server}.${event.tool} (${event.status})`;
+    case "plan":
+      return `plan: ${event.text}`;
+    case "autoApproval":
+      return `${event.decision}: ${event.action}`;
+    case "approval":
+      return event.phase === "waiting" ? `awaiting approval: ${event.what}` : `${event.decision} ${event.what}`;
+    case "message":
+      return event.text;
+    case "result":
+      return `result (${event.status})`;
+    case "error":
+      return `error: ${event.message}`;
+  }
 }
 
 /** The permission-relevant shape, without echoing full rule contents. */

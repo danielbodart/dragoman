@@ -18,7 +18,7 @@
 import { mirror, resolveMode, type CodexPolicy } from "./mirror.ts";
 import { readSettings as readSettingsFromDisk, type EffectiveSettings } from "./settings.ts";
 import type { AppServerConn } from "./codex.ts";
-import type { RunEvent, RunHandle, RunRecord } from "./model.ts";
+import type { RunEvent, RunHandle, RunRecord, RunUsage } from "./model.ts";
 import type { ThreadStartParams } from "../generated/codex-protocol/ts/v2/ThreadStartParams.ts";
 import type { ThreadResumeParams } from "../generated/codex-protocol/ts/v2/ThreadResumeParams.ts";
 import type { ThreadStartResponse } from "../generated/codex-protocol/ts/v2/ThreadStartResponse.ts";
@@ -51,6 +51,13 @@ export class ThreadRuns {
   private readonly waiters = new Map<RunHandle, Array<() => void>>();
   /** The live app-server behind each run, torn down when the run settles. */
   private readonly provisioned = new Map<RunHandle, Provisioned>();
+  /**
+   * The account-global rate-limit windows (5h / weekly), as percentages used —
+   * shared by every run, not per-thread. Merged from the sparse
+   * `account/rateLimits/updated` feed; `codex_status` composes these with a run's
+   * own context percentage into one `RunUsage`.
+   */
+  private accountUsage: { "5h"?: number; "7d"?: number } = {};
 
   /**
    * `provision` spawns a FRESH app-server per run from the compiled policy — so
@@ -407,6 +414,26 @@ export class ThreadRuns {
   }
 
   /**
+   * Merge a sparse rate-limit update into the account-global snapshot: a window
+   * that is present overwrites, one that is absent leaves the last value standing
+   * (the feed is a rolling partial, per `AccountRateLimitsUpdatedNotification`).
+   */
+  mergeAccountLimits(limits: RunUsage): void {
+    if (limits["5h"] !== undefined) this.accountUsage["5h"] = limits["5h"];
+    if (limits["7d"] !== undefined) this.accountUsage["7d"] = limits["7d"];
+  }
+
+  /**
+   * A run's usage snapshot: the account-global rate-limit windows composed with
+   * this run's own context occupancy. Every field a percentage used (0–100);
+   * fields not yet observed are simply absent.
+   */
+  usage(handle: RunHandle): RunUsage {
+    const ctx = this.runs.get(handle)?.ctx;
+    return { ...this.accountUsage, ...(ctx !== undefined ? { ctx } : {}) };
+  }
+
+  /**
    * Bump a run's revision and wake any long-poll waiters — called after every
    * mutation of a run. The write itself is the wake signal, so a blocked poll
    * returns the instant something changes.
@@ -471,7 +498,7 @@ export class ThreadRuns {
     // mirroring the same guard the success path uses ("starting" -> "running").
     if (run && (run.status === "starting" || run.status === "running")) {
       run.status = "error";
-      this.append(handle, { at: this.now(), kind: "error", text: message });
+      this.append(handle, { at: this.now(), kind: "error", message });
       this.bump(handle);
     }
   }

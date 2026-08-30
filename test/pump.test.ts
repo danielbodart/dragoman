@@ -137,13 +137,14 @@ describe("codex_run / codex_status", () => {
     expect((start?.params as { runtimeWorkspaceRoots?: string[] }).runtimeWorkspaceRoots).toEqual(["/repo", "/data", "/cache"]);
   });
 
-  test("status is a no-IO snapshot and reflects the latest heartbeat", async () => {
+  test("status is a no-IO snapshot and reflects the latest milestone", async () => {
     const { conn, runs, threadId } = bridge();
     await runs.start("do the thing", "/repo");
-    conn.emit({ emittedAtMs: 1500, method: "turn/started", params: { threadId, turn: { id: "turn1", items: [], itemsView: "complete", status: "inProgress", error: null, startedAt: null, completedAt: null, durationMs: null } as never } });
-    // Give the notification loop a tick to fold the beat in.
+    const cmd = { type: "commandExecution", id: "c1", pluginId: null, scriptPath: null, command: "cargo test", cwd: "/repo", processId: null, source: "agent", status: "inProgress", commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null } as ThreadItem;
+    conn.emit({ emittedAtMs: 1500, method: "item/started", params: { item: cmd, threadId, turnId: "turn1", startedAtMs: 1500 } });
+    // Give the notification loop a tick to fold the event in.
     await Bun.sleep(1);
-    expect(runs.status(threadId)?.events.at(-1)?.text).toBe("starting turn");
+    expect(runs.status(threadId)?.events.at(-1)).toEqual({ kind: "command", at: 1500, phase: "running", command: "cargo test", status: "inProgress" });
   });
 
   test("beats pile up between polls and drain in order — an auto-approval is not clobbered", async () => {
@@ -158,13 +159,13 @@ describe("codex_run / codex_status", () => {
     conn.emit({ emittedAtMs: 1602, method: "item/completed", params: { item: cmd, threadId, turnId: "turn1", completedAtMs: 1602 } });
     await Bun.sleep(1);
 
-    // The middle beat would be lost under a single overwritten slot; the drain
+    // The middle event would be lost under a single overwritten slot; the drain
     // hands back all three, oldest first — the auto-approval survives.
     expect(runs.hasPending(threadId)).toBe(true);
-    expect(runs.drain(threadId).map((b) => b.text)).toEqual([
-      'running: echo "hi"',
-      'auto-approved (risk: low): echo "hi"',
-      'ran: echo "hi"',
+    expect(runs.drain(threadId)).toEqual([
+      { kind: "command", at: 1600, phase: "running", command: 'echo "hi"', status: "inProgress" },
+      { kind: "autoApproval", at: 1601, decision: "approved", risk: "low", action: 'echo "hi"' },
+      { kind: "command", at: 1602, phase: "ran", command: 'echo "hi"', status: "inProgress" },
     ]);
     // Drained exactly once: a second poll has nothing left to deliver.
     expect(runs.hasPending(threadId)).toBe(false);
@@ -283,7 +284,7 @@ describe("the approval bridge — the anti-hang property", () => {
     // the notification loop was never stalled by the unanswered request.
     conn.emit({ emittedAtMs: 1600, method: "item/started", params: { item: { type: "commandExecution", id: "c1", pluginId: null, scriptPath: null, command: "ls", cwd: "/repo", processId: null, source: "agent", status: "inProgress", commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null } as ThreadItem, threadId, turnId: "turn1", startedAtMs: 1600 } });
     await Bun.sleep(1);
-    expect(runs.status(threadId)?.events.at(-1)?.text).toBe("running: ls");
+    expect(runs.status(threadId)?.events.at(-1)).toMatchObject({ kind: "command", phase: "running", command: "ls" });
 
     // The user answers; the decision flows back to Codex as the reply.
     elicitation.answer("acceptForSession");
@@ -302,10 +303,11 @@ describe("the approval bridge — the anti-hang property", () => {
     expect(runs.status(threadId)?.status).toBe("running"); // the waiting STATUS has already lifted
 
     // A poll that only fires now — after the answer — still drains BOTH the waiting and
-    // the outcome beats. The status snapshot alone would have lost the whole approval.
-    const beats = runs.drain(threadId).map((b) => b.text);
-    expect(beats).toContain("waiting for your approval: run `bash -lc 'python3 -c pass'`");
-    expect(beats).toContain("you approved: run `bash -lc 'python3 -c pass'`");
+    // the resolved approval events. The status snapshot alone would have lost the whole approval.
+    const approvals = runs.drain(threadId).filter((e) => e.kind === "approval");
+    const what = "run `bash -lc 'python3 -c pass'`";
+    expect(approvals).toContainEqual({ kind: "approval", at: expect.any(Number), phase: "waiting", what });
+    expect(approvals).toContainEqual({ kind: "approval", at: expect.any(Number), phase: "resolved", what, decision: "accept" });
   });
 
   test("a file-change approval is elicited to the human, then replies with the decision", async () => {
@@ -463,7 +465,7 @@ describe("long-poll (waitForUpdate) — event-driven status", () => {
       params: { item: { type: "commandExecution", id: "c1", pluginId: null, scriptPath: null, command: "ls", cwd: "/repo", processId: null, source: "agent", status: "inProgress", commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null } as ThreadItem, threadId, turnId: "turn1", startedAtMs: 1600 },
     });
     const { snapshot } = await poll;
-    expect(snapshot?.events.at(-1)?.text).toBe("running: ls");
+    expect(snapshot?.events.at(-1)).toMatchObject({ kind: "command", phase: "running", command: "ls" });
   });
 
   test("returns immediately when the run is already terminal", async () => {
@@ -524,7 +526,7 @@ describe("Codex back-channel — mid-run agent messages", () => {
 
     const events = runs.drain(threadId);
     // One event, upgraded in place — it keeps the message's own timestamp (1700).
-    expect(events).toEqual([{ at: 1700, kind: "result", text: "all done" }]);
+    expect(events).toEqual([{ kind: "result", at: 1700, status: "completed", text: "all done" }]);
     expect(runs.status(threadId)?.status).toBe("done");
   });
 
@@ -539,6 +541,6 @@ describe("Codex back-channel — mid-run agent messages", () => {
     // Completion still delivers the result, since the buffer tail no longer holds it.
     conn.emit(turnCompleted(threadId, "all done"));
     await Bun.sleep(1);
-    expect(runs.drain(threadId)).toEqual([{ at: 2000, kind: "result", text: "all done" }]);
+    expect(runs.drain(threadId)).toEqual([{ kind: "result", at: 2000, status: "completed", text: "all done" }]);
   });
 });

@@ -4,49 +4,74 @@
  * Codex types live under generated/codex-protocol/; these are ours.
  */
 
-/**
- * A single coarse status line — one milestone in a Codex run.
- *
- * The heartbeat design (PLAN §6) is "a filter, not a pipe": the firehose of
- * ~80 notification types is collapsed to a sparse sequence of these. Each beat
- * is buffered (`pendingBeats`) and delivered to the caller exactly once, in
- * order — so a milestone that is instantly superseded (an auto-approval landing
- * between a command's `running:` and `ran:`) is never silently dropped at the
- * polling boundary. A beat is a milestone, not a log line.
- */
-export interface Beat {
-  /** When Codex emitted the notification this beat came from (ms), or our clock. */
-  readonly at: number;
-  /** The human-facing one-liner, e.g. "running: cargo test" or "editing 2 file(s)". */
-  readonly text: string;
-}
+import type { CommandExecutionStatus } from "../generated/codex-protocol/ts/v2/CommandExecutionStatus.ts";
+import type { PatchApplyStatus } from "../generated/codex-protocol/ts/v2/PatchApplyStatus.ts";
+import type { McpToolCallStatus } from "../generated/codex-protocol/ts/v2/McpToolCallStatus.ts";
+import type { TurnStatus } from "../generated/codex-protocol/ts/v2/TurnStatus.ts";
 
 /**
- * One entry in a run's single timeline — the unified message log.
+ * One entry in a run's single timeline — the unified, STRUCTURED event log.
  *
- * Everything a run wants to tell the caller is ONE of these, regardless of which
- * inbound channel produced it: a progress milestone from the notification feed, an
- * approval raised/resolved by the server-request handler, a note from Codex, or the
- * terminal outcome. All producers `append` a `RunEvent`; `codex_status` drains the
- * log and renders it — so a new source can never reintroduce the "we dropped that
- * one" bug, because there is exactly one place state is kept (docs/archive/peer-agent-lifecycle.md: the
- * back-channel table). `kind` distinguishes the terminal outcome ("Done. …" /
- * "Errored …") from in-flight entries so the renderer can phrase it, and marks a
- * `message` — Codex's own words mid-run, its back-channel to the driving agent —
- * apart from a `progress` milestone (a tool step). In-flight entries (`progress`,
- * `message`) render the same; the split lets a consumer tell "Codex said X" from
- * "ran: X".
+ * Everything a run tells the caller is ONE of these, regardless of which inbound
+ * channel produced it: a tool milestone from the notification feed, an approval
+ * raised/resolved by the server-request handler, a note from Codex, or the
+ * terminal outcome. All producers `append` a `RunEvent`; `codex_status` drains
+ * the log and returns the events verbatim as `structuredContent` — so a new
+ * source can never reintroduce the "we dropped that one" bug (exactly one place
+ * state is kept), and the DRIVING AGENT reads typed fields, not a prose line it
+ * has to parse (docs/archive/peer-agent-lifecycle.md: the back-channel table).
+ *
+ * The design rule: a field the source already separated (a file path, an exit
+ * code, a tool name) stays its own field here — we never re-flatten it into a
+ * sentence. The ONLY free text is `message.text`: Codex's own words, which are
+ * prose by nature. Everything Codex measured or named is structured.
+ *
+ * `kind` is the discriminant. `at` is when the source emitted it (ms) or our
+ * clock. The rest is per-kind:
+ *
+ *  - `command`  a shell command, `running` on start / `ran` on completion,
+ *               with the exit code and duration once known.
+ *  - `edit`     a file patch: each file by path + change kind (add/delete/update).
+ *  - `webSearch` a web search, carrying the query and action Codex ran.
+ *  - `mcpTool`  an MCP tool call: server, tool, status, and any error.
+ *  - `plan`     Codex's plan text for the turn.
+ *  - `autoApproval` the guardian auto-deciding (no human), with risk + action.
+ *  - `approval` a HUMAN approval lifecycle: `waiting` when parked, `resolved`
+ *               with the decision once answered.
+ *  - `message`  Codex's own words mid-run — the one free-text kind — with the
+ *               source's `phase` (commentary vs. final_answer) when it gave one.
+ *  - `result`   the terminal success outcome: the final message, turn status,
+ *               and total duration.
+ *  - `error`    the terminal failure: message and any extra detail.
  */
-export type RunEventKind = "progress" | "message" | "result" | "error";
+export type RunEvent =
+  | { readonly kind: "command"; readonly at: number; readonly phase: "running" | "ran"; readonly command: string; readonly status: CommandExecutionStatus; readonly exitCode?: number; readonly durationMs?: number }
+  | { readonly kind: "edit"; readonly at: number; readonly files: readonly { readonly path: string; readonly change: "add" | "delete" | "update" }[]; readonly status: PatchApplyStatus }
+  | { readonly kind: "webSearch"; readonly at: number; readonly query?: string; readonly action?: "search" | "openPage" | "findInPage" | "other" }
+  | { readonly kind: "mcpTool"; readonly at: number; readonly server: string; readonly tool: string; readonly status: McpToolCallStatus; readonly durationMs?: number; readonly error?: string }
+  | { readonly kind: "plan"; readonly at: number; readonly text: string }
+  | { readonly kind: "autoApproval"; readonly at: number; readonly decision: string; readonly risk?: string; readonly action: string }
+  | { readonly kind: "approval"; readonly at: number; readonly phase: "waiting" | "resolved"; readonly what: string; readonly decision?: string }
+  | { readonly kind: "message"; readonly at: number; readonly text: string; readonly phase?: "commentary" | "final_answer" }
+  | { readonly kind: "result"; readonly at: number; readonly status: TurnStatus; readonly text?: string; readonly durationMs?: number }
+  | { readonly kind: "error"; readonly at: number; readonly message: string; readonly details?: string };
 
-export interface RunEvent {
-  /** When the source emitted this (ms), or our clock. */
-  readonly at: number;
-  /** What the entry is: a `progress` milestone, a `message` from Codex, or the
-   * terminal `result`/`error`. In-flight kinds render alike. */
-  readonly kind: RunEventKind;
-  /** The human-facing one-liner. */
-  readonly text: string;
+/**
+ * A run's usage snapshot, every field a PERCENTAGE USED (0–100), rounded.
+ *
+ * Deliberately not token counts: the driving agent wants "how close am I to a
+ * wall", not "61k of 250k". Two of these are account-global (the rate-limit
+ * windows, shared across every run and merged from the sparse
+ * `account/rateLimits/updated` feed); `ctx` is per-run (this thread's context
+ * occupancy from `thread/tokenUsage/updated`). `codex_status` composes all three.
+ */
+export interface RunUsage {
+  /** % of the short (5-hour) rate-limit window used. */
+  readonly "5h"?: number;
+  /** % of the weekly rate-limit window used. */
+  readonly "7d"?: number;
+  /** % of this thread's model context window used. */
+  readonly ctx?: number;
 }
 
 /** Opaque handle `codex_run` returns and `codex_status` takes. Currently a thread id. */
@@ -92,6 +117,10 @@ export interface RunRecord {
    * for `acceptEdits`), or refuse (`decline`, for `dontAsk`). */
   readonly fileChange?: "elicit" | "accept" | "decline";
   status: RunStatus;
+  /** This thread's context-window occupancy, as a percentage used (0–100), from
+   * the latest `thread/tokenUsage/updated`. Latest-wins telemetry (like `status`),
+   * not part of the event log; `codex_status` folds it into `RunUsage.ctx`. */
+  ctx?: number;
   /** The active turn's id (Codex UUIDv7), refreshed on every `turn/started`.
    * The precondition `turn/interrupt` and `turn/steer` both require — captured
    * here so a cancel/steer/continue tool can name the turn without a round-trip —
