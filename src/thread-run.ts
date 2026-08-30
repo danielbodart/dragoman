@@ -17,7 +17,9 @@
  */
 import { mirror, resolveMode, type CodexPolicy } from "./mirror.ts";
 import { readSettings as readSettingsFromDisk, type EffectiveSettings } from "./settings.ts";
+import { limitsFrom } from "./pump.ts";
 import type { AppServerConn } from "./codex.ts";
+import type { GetAccountRateLimitsResponse } from "../generated/codex-protocol/ts/v2/GetAccountRateLimitsResponse.ts";
 import type { RunEvent, RunHandle, RunRecord, RunUsage } from "./model.ts";
 import type { ThreadStartParams } from "../generated/codex-protocol/ts/v2/ThreadStartParams.ts";
 import type { ThreadResumeParams } from "../generated/codex-protocol/ts/v2/ThreadResumeParams.ts";
@@ -237,7 +239,31 @@ export class ThreadRuns {
     const policy = mirror(settings, mode);
     const provisioned = await this.provision(policy);
     this.onConn(provisioned.conn); // wire the pump onto this run's connection
+    this.seedAccountLimits(provisioned.conn);
     return { settings, policy, provisioned, conn: provisioned.conn };
+  }
+
+  /**
+   * Read the account's rate-limit windows ONCE at connect, so the very first
+   * `codex_status` already carries usage — the `account/rateLimits/updated` feed
+   * is sparse and rolling, and may not have landed yet. Best-effort and never
+   * awaited: it must not delay the handle `start()` returns, and a Codex that
+   * doesn't answer this method (or answers nothing) simply leaves usage to the
+   * feed. Waking every live run means a poll parked before the read lands still
+   * refreshes when it does.
+   */
+  private seedAccountLimits(conn: AppServerConn): void {
+    void conn
+      .request("account/rateLimits/read", undefined)
+      .then((response) => {
+        const snapshot = (response as GetAccountRateLimitsResponse | undefined)?.rateLimits;
+        if (!snapshot) return;
+        this.mergeAccountLimits(limitsFrom(snapshot));
+        for (const handle of this.handles()) this.bump(handle);
+      })
+      .catch(() => {
+        // Best-effort only — the sparse update feed is the real source of truth.
+      });
   }
 
   /**

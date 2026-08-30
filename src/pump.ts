@@ -478,7 +478,7 @@ function apply(notification: Notification, runs: ThreadRuns): void {
  * positionally (primary/secondary), but we classify by `windowDurationMins` so a
  * reordering upstream can't mislabel them. A sparse update may carry only one.
  */
-function limitsFrom(snapshot: RateLimitSnapshot): RunUsage {
+export function limitsFrom(snapshot: RateLimitSnapshot): RunUsage {
   const windows = [snapshot.primary, snapshot.secondary]
     .filter((w): w is NonNullable<typeof w> => w != null)
     .sort((a, b) => (a.windowDurationMins ?? 0) - (b.windowDurationMins ?? 0));

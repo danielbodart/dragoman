@@ -72,7 +72,7 @@ export function buildServer(runs: ThreadRuns): Server {
       case "codex_review":
         return result(await reviewCodex(runs, args ?? {}));
       case "diagnostics":
-        return result({ report: diagnostics(runs) });
+        return result(diagnostics(runs));
       default:
         return result({ error: `unknown tool: ${name}` }, true);
     }

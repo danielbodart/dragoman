@@ -493,6 +493,85 @@ describe("long-poll (waitForUpdate) — event-driven status", () => {
   });
 });
 
+describe("usage — context window + rate-limit windows", () => {
+  const tokenUsage = (threadId: string, totalTokens: number, modelContextWindow: number | null): Notification => ({
+    emittedAtMs: 1800,
+    method: "thread/tokenUsage/updated",
+    params: {
+      threadId,
+      turnId: "turn1",
+      tokenUsage: {
+        total: { totalTokens, inputTokens: totalTokens, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
+        last: { totalTokens, inputTokens: totalTokens, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
+        modelContextWindow,
+      },
+    } as never,
+  });
+
+  const rateLimits = (primaryMins: number, primaryPct: number, secondaryMins: number, secondaryPct: number): Notification => ({
+    emittedAtMs: 1801,
+    method: "account/rateLimits/updated",
+    params: {
+      rateLimits: {
+        limitId: null, limitName: null,
+        primary: { usedPercent: primaryPct, windowDurationMins: primaryMins, resetsAt: null },
+        secondary: { usedPercent: secondaryPct, windowDurationMins: secondaryMins, resetsAt: null },
+        credits: null, individualLimit: null, spendControlReached: null, planType: null, rateLimitReachedType: null,
+      },
+    } as never,
+  });
+
+  test("thread/tokenUsage/updated sets ctx as a percentage of the model window", async () => {
+    const { conn, runs, threadId } = bridge();
+    await runs.start("go", "/repo");
+    conn.emit(tokenUsage(threadId, 50_000, 200_000));
+    await Bun.sleep(1);
+    expect(runs.usage(threadId).ctx).toBe(25);
+  });
+
+  test("an unknown context window leaves ctx unset (can't compute a percentage)", async () => {
+    const { conn, runs, threadId } = bridge();
+    await runs.start("go", "/repo");
+    conn.emit(tokenUsage(threadId, 50_000, null));
+    await Bun.sleep(1);
+    expect(runs.usage(threadId).ctx).toBeUndefined();
+  });
+
+  test("rate-limit windows are labelled 5h/7d by duration, not by primary/secondary position", async () => {
+    const { conn, runs, threadId } = bridge();
+    await runs.start("go", "/repo");
+    // Put the WEEKLY window first (primary) and the 5-hour second — classification
+    // must still key on windowDurationMins, not position.
+    conn.emit(rateLimits(10_080, 18, 300, 42));
+    await Bun.sleep(1);
+    expect(runs.usage(threadId)).toMatchObject({ "5h": 42, "7d": 18 });
+  });
+
+  test("status composes account windows with the run's own context percentage", async () => {
+    const { conn, runs, threadId } = bridge();
+    await runs.start("go", "/repo");
+    conn.emit(rateLimits(300, 42, 10_080, 18));
+    conn.emit(tokenUsage(threadId, 120_000, 200_000));
+    await Bun.sleep(1);
+    expect(runs.usage(threadId)).toEqual({ "5h": 42, "7d": 18, ctx: 60 });
+  });
+
+  test("a sparse rate-limit update merges without clearing the other window", async () => {
+    const { conn, runs, threadId } = bridge();
+    await runs.start("go", "/repo");
+    conn.emit(rateLimits(300, 42, 10_080, 18));
+    await Bun.sleep(1);
+    // A later update carrying ONLY the 5-hour window must leave the weekly standing.
+    conn.emit({
+      emittedAtMs: 1802,
+      method: "account/rateLimits/updated",
+      params: { rateLimits: { limitId: null, limitName: null, primary: { usedPercent: 55, windowDurationMins: 300, resetsAt: null }, secondary: null, credits: null, individualLimit: null, spendControlReached: null, planType: null, rateLimitReachedType: null } } as never,
+    });
+    await Bun.sleep(1);
+    expect(runs.usage(threadId)).toMatchObject({ "5h": 55, "7d": 18 });
+  });
+});
+
 describe("Codex back-channel — mid-run agent messages", () => {
   const agentMessageItem = (text: string): ThreadItem =>
     ({ type: "agentMessage", id: "am1", text, phase: null, memoryCitation: null, delivery: null } as ThreadItem);
