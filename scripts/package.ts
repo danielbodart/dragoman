@@ -47,6 +47,7 @@ export async function packagePlugin(out = "dist/dragoman-plugin.zip") {
   await $`cp packaging/mcp.json ${`${stage}/.mcp.json`}`;
   await $`cp packaging/hooks.json ${`${stage}/hooks.json`}`;
   await $`cp packaging/check-dependencies.sh ${`${stage}/scripts/check-dependencies.sh`}`;
+  await $`cp packaging/inject-posture.sh ${`${stage}/scripts/inject-posture.sh`}`;
   await $`cp -r skills agents ${stage}/`;
   await $`chmod -R u+rwX,go+rX ${stage}`;
 
