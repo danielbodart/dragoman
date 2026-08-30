@@ -347,11 +347,31 @@ derives the whole posture from Claude.
   raise; `plan` uses Codex's **native plan mode**, where the model refuses writes with
   no prompt. Still to probe: `dontAsk`'s decline path leaving only allow-listed +
   read-only running once [A] is fixed.
-- **`autoAllowBashIfSandboxed`** — not read yet (default `true`). A user on the
-  *regular* (non-auto-allow) sandbox expects in-workspace commands to prompt too;
-  we'd need to raise those instead of letting the sandbox auto-run them.
+- **`autoAllowBashIfSandboxed`** — ✅ resolved as a deliberate NON-change (docs +
+  probes). It's a Claude sandbox-axis setting (`sandbox.autoAllowBashIfSandboxed`,
+  default `true`) that only bites when Claude's sandbox is ON: then a *sandboxable*
+  bash command auto-runs with **no prompt in every mode except plan** — "the sandbox
+  boundary itself is the approval gate", which is exactly Codex's model.
+  - `true` (default): manual/dontAsk stay **`untrusted`**. That prompts for a
+    non-trusted in-sandbox bash command Claude's autoAllow would auto-run — a slight
+    OVER-prompt, but safe (we never run *more* than Claude) and in character (manual =
+    expect prompts). We do NOT switch to `on-request` (which would auto-run in-sandbox
+    reads, matching autoAllow): `on-request` makes shell-write **escapes flaky**
+    (verified 1/4 hard-failed with no prompt), undermining the reliable escape-prompt
+    manual needs — whereas `untrusted` prompts every escape reliably. (Edits reliably
+    prompt under both — verified 3/3 on-request — so that wasn't the deciding factor.)
+    `plan` is the one mode autoAllow doesn't widen, and ours already gates it.
+  - `false` ("prompt even sandboxable commands"): **not faithfully mappable.** No
+    approvalPolicy is stricter than `untrusted` (which still auto-runs Codex's built-in
+    *trusted* commands), and execpolicy can't express "prompt everything except the
+    allow-list" — empty patterns are rejected (no catch-all) and `not_match` is a
+    load-time assertion, not runtime negation. Residual (documented limitation): a
+    user on `false` still sees Codex's trusted commands (`ls`, `cat`) auto-run.
 - **Permissions requests** still fail-closed (their reply grants a profile, not a
-  yes/no) — wire them once the profile-grant shape is handled.
+  yes/no) — wire them once the profile-grant shape is handled. Hard to verify: no
+  known way to trigger `item/permissions/requestApproval` deterministically yet, so
+  shipping a grant would be untested. Needs a repro path + a decision on whether an
+  approved grant is intersected with Claude's `deny` rules.
 - **WebFetch cross-channel mapping** — decide and verify how a Claude WebFetch tool
   permission translates to Codex's sandboxed-exec network (allow, never fence).
 - **Caching decorator** over `provision` (per-run spawn is the core; reuse later).
