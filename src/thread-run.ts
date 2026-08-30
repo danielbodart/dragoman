@@ -246,15 +246,21 @@ export class ThreadRuns {
    */
   private mirrorParams(policy: CodexPolicy, settings: EffectiveSettings, cwd: string) {
     const reviewer = policy.approvalsReviewer ? { approvalsReviewer: policy.approvalsReviewer } : {};
+    // Codex's native concise mode (the analogue of Claude's concise output style): a
+    // scalar `config` override, so Codex's own progress notes stay terse. `config` is a
+    // dotted-scalar override the app-server accepts (it can't build a [permissions] table
+    // — that's why the profile still lives in config.toml — but a scalar like this rides
+    // fine), and both thread/start and thread/resume take it.
+    const base = { ...reviewer, config: { model_verbosity: "low" } };
     return policy.profile
       ? {
           cwd,
           approvalPolicy: policy.approvalPolicy,
-          ...reviewer,
+          ...base,
           permissions: policy.profile.id,
           runtimeWorkspaceRoots: [cwd, ...settings.additionalDirectories],
         }
-      : { cwd, approvalPolicy: policy.approvalPolicy, ...reviewer, sandbox: "danger-full-access" as const };
+      : { cwd, approvalPolicy: policy.approvalPolicy, ...base, sandbox: "danger-full-access" as const };
   }
 
   /** Record a freshly-provisioned run (new or continued): its live conn (torn down

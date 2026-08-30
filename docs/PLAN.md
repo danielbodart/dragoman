@@ -4,9 +4,9 @@ _Status: the foundation, the production `diagnostics` probe, all three lifecycle
 tools (`codex_cancel`, `codex_steer`, `codex_continue`), the unified event-log
 substrate, the Codex→agent back-channel (mid-run `agentMessage`s as events), and
 `codex_review` (Codex's dedicated review pass) have landed — wired into the MCP surface
-and covered by `test/lifecycle.test.ts` / `test/pump.test.ts`. Still open: verifying the
-`codex-agent` messaging relay end-to-end in a live run. `codex_diff` was dropped (see
-Secondary tools)._
+and covered by `test/lifecycle.test.ts` / `test/pump.test.ts`. The `codex-agent` messaging
+relay is verified (delivery probed live). **Everything in this plan is now done**;
+`codex_diff` was dropped (see Secondary tools)._
 
 ## Why
 
@@ -251,10 +251,13 @@ surface does. Changes made:
 4. **`codex_steer`** — same precondition, adds the in-flight-turn injection path. DONE.
 5. **`codex_continue`** — the structural one (resume + re-mirror). DONE.
 6. **Unified event log + `agentMessage` back-channel.** DONE.
-7. **`codex-agent` relay** — the agent-definition guidance is written (turn an inbound
-   message into `codex_steer`/`codex_cancel`, relay Codex's own `message` events back).
-   OPEN: verify end-to-end in a live run that a mid-run `SendMessage` actually reaches
-   the subagent between polls — no code expected, just the empirical check.
+7. **`codex-agent` relay.** DONE. The agent-definition guidance is written (turn an
+   inbound message into `codex_steer`/`codex_cancel`, relay Codex's own `message` events
+   back), and the delivery path is verified: a probe blocked in a long tool call received
+   a mid-run `SendMessage` verbatim and could act on it on its next step. Precise finding
+   — messages land at **tool-result boundaries**, not injected into a blocked call, so for
+   codex-agent one arrives the instant its `codex_status` poll returns (next Codex beat,
+   ≤~100s), which is exactly what the agent doc states.
 8. **Secondary — `codex_review`.** DONE (prototyped, then built as a thin `codex_run`
    sibling). `codex_diff` dropped (Claude runs `git diff` itself).
 

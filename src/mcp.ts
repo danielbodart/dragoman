@@ -255,10 +255,13 @@ async function reviewCodex(runs: ThreadRuns, args: Record<string, unknown>): Pro
   return `Started Codex review. Poll codex_status with handle "${handle}".`;
 }
 
-/** How long a single codex_status call blocks waiting for progress, before it
- * returns "still running" so the caller can poll again — kept under Claude Code's
- * ~120s tool-call ceiling. */
-const STATUS_LONGPOLL_MS = 100_000;
+/** How long a single codex_status call blocks waiting for progress, before it returns
+ * "still running" so the caller can poll again. It returns the INSTANT a beat lands
+ * (event-driven wake), so this is only the cap for a quiet stretch — and it doubles as
+ * the worst-case latency for a steer/cancel message reaching a subagent parked here (it
+ * can only act once this call returns). 30s balances that against re-poll churn on a
+ * fully-quiet run; well under Claude Code's ~120s tool-call ceiling. */
+const STATUS_LONGPOLL_MS = 30_000;
 
 async function statusCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<string> {
   const handle = String(args.handle ?? "");

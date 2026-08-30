@@ -77,6 +77,15 @@ function approvalBeat(params: ItemGuardianApprovalReviewCompletedNotification, a
   return { at, text: `${verb}${risk}: ${actionSummary(params.action)}` };
 }
 
+/** The edited file(s) as a coarse one-liner: `edited a.ts`, or several by basename with
+ * an overflow count so the beat stays short even for a wide patch. */
+function fileChangeText(changes: readonly { path: string }[]): string {
+  const names = changes.map((c) => c.path.split("/").pop() || c.path);
+  if (names.length === 1) return `edited ${names[0]}`;
+  if (names.length <= 3) return `edited ${names.join(", ")}`;
+  return `edited ${names.slice(0, 3).join(", ")} +${names.length - 3} more`;
+}
+
 /** A short, coarse label for the action an approval review decided on. */
 function actionSummary(action: GuardianApprovalReviewAction): string {
   switch (action.type) {
@@ -109,7 +118,9 @@ function itemBeat(item: ThreadItem, phase: "start" | "done", at: number): Beat |
     case "commandExecution":
       return { at, text: `${phase === "start" ? "running" : "ran"}: ${item.command}` };
     case "fileChange":
-      return { at, text: `editing ${item.changes.length} file(s)` };
+      // One beat per edit, on completion — a start+done pair for the same edit is
+      // noise. Name the file(s) rather than just a count.
+      return phase === "done" ? { at, text: fileChangeText(item.changes) } : undefined;
     case "plan":
       return { at, text: `plan: ${item.text}` };
     case "mcpToolCall":

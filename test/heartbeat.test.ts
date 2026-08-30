@@ -26,17 +26,21 @@ function commandItem(command: string): ThreadItem {
   } as ThreadItem;
 }
 
-function fileChangeItem(count: number): ThreadItem {
+function fileChangeItem(paths: string[]): ThreadItem {
   return {
     type: "fileChange",
     id: "i2",
-    changes: Array.from({ length: count }, () => ({})) as never,
+    changes: paths.map((path) => ({ path, kind: "update", diff: "" })) as never,
     status: "completed",
   } as ThreadItem;
 }
 
 function itemStarted(item: ThreadItem, threadId = "t1", at = 1000): Notification {
   return { emittedAtMs: at, method: "item/started", params: { item, threadId, turnId: "turn1", startedAtMs: at } };
+}
+
+function itemCompleted(item: ThreadItem, threadId = "t1", at = 1000): Notification {
+  return { emittedAtMs: at, method: "item/completed", params: { item, threadId, turnId: "turn1", completedAtMs: at } };
 }
 
 describe("beatOf", () => {
@@ -55,8 +59,12 @@ describe("beatOf", () => {
     expect(beatOf(n)).toEqual({ at, text: "ran: ls" });
   });
 
-  test("a file change counts the files touched", () => {
-    expect(beatOf(itemStarted(fileChangeItem(3)))).toEqual({ at: 1000, text: "editing 3 file(s)" });
+  test("a file change names the file(s), on completion only (not the start)", () => {
+    // The start of an edit is not a beat — only its completion, to avoid a start+done pair.
+    expect(beatOf(itemStarted(fileChangeItem(["src/a.ts"])))).toBeUndefined();
+    expect(beatOf(itemCompleted(fileChangeItem(["src/a.ts"])))).toEqual({ at: 1000, text: "edited a.ts" });
+    expect(beatOf(itemCompleted(fileChangeItem(["a.ts", "b.ts"])))).toEqual({ at: 1000, text: "edited a.ts, b.ts" });
+    expect(beatOf(itemCompleted(fileChangeItem(["a", "b", "c", "d", "e"])))).toEqual({ at: 1000, text: "edited a, b, c +2 more" });
   });
 
   test("turn/completed distinguishes success from failure", () => {
