@@ -9,9 +9,6 @@ bun.lockb.*
 dist/
 build/
 *.tsbuildinfo
-# Bundle artifacts must never land in src/ (it is pure TypeScript)
-src/**/*.js
-src/**/*.js.map
 # Compiled single-binary output
 /dragoman
 /dragoman-*
