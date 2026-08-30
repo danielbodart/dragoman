@@ -74,7 +74,7 @@ Dragoman is a Claude Code plugin. Add the marketplace and install it:
 
 ```
 /plugin marketplace add danielbodart/dragoman
-/plugin install dragoman@dragoman
+/plugin install dragoman@danielbodart 
 ```
 
 That pulls a small archive (~280 KB) carrying the server as a single bundled
