@@ -174,6 +174,36 @@ describe("mirror — network posture → profile.network.enabled", () => {
     // Claude merges WebFetch(domain:...) allow rules into the sandbox network allowlist.
     expect(enabled({ sandboxEnabled: true, allow: ["WebFetch(domain:example.com)"] })).toBe(true);
   });
+
+  const domains = (s: Partial<EffectiveSettings>) => mirror(settings(s), "default").profile!.network!.domains;
+
+  test("the per-host allowlist is the trusted-host set, emitted regardless of the sandbox", () => {
+    // WebFetch/allowedDomains → allow, deniedDomains → deny; deny wins in Codex. This
+    // is the set of hosts the user trusts, orthogonal to the Codex sandbox axis.
+    const rules = { allowedDomains: ["api.example.com"], allow: ["WebFetch(domain:x.com)"], deniedDomains: ["bad.com"] };
+    const expected = [["api.example.com", "allow"], ["x.com", "allow"], ["bad.com", "deny"]] as [string, "allow" | "deny"][];
+    expect(domains(rules)).toEqual(expected); // Claude sandbox off
+    expect(domains({ ...rules, sandboxEnabled: true })).toEqual(expected); // and on
+  });
+});
+
+describe("mirror — a WebFetch(domain:) rule implies curl/wget allows", () => {
+  // Codex has no fetch tool, so "you may reach host x" is honoured by letting the
+  // shell fetchers reach it without a prompt; the network allowlist scopes the hosts.
+  const prefixes = (s: Partial<EffectiveSettings>) => mirror(settings(s), "default").execpolicyAmendments;
+
+  test("a WebFetch(domain:) allow rule adds implicit curl + wget prefixes", () => {
+    expect(prefixes({ allow: ["WebFetch(domain:example.com)"] })).toEqual([["curl"], ["wget"]]);
+  });
+  test("with a Bash allow too, both the Bash prefix and the fetchers are present", () => {
+    expect(prefixes({ allow: ["Bash(npm run test:*)", "WebFetch(domain:example.com)"] })).toEqual([
+      ["npm", "run", "test"], ["curl"], ["wget"],
+    ]);
+  });
+  test("no WebFetch rule → no implicit fetchers", () => {
+    expect(prefixes({ allow: ["Bash(ls:*)"] })).toEqual([["ls"]]);
+    expect(prefixes({})).toEqual([]);
+  });
 });
 
 describe("mirror — allow rules → execpolicy amendments", () => {
@@ -182,8 +212,8 @@ describe("mirror — allow rules → execpolicy amendments", () => {
     expect(p.execpolicyAmendments).toEqual([["npm", "run", "test"]]);
   });
 
-  test("non-Bash rules are ignored", () => {
-    const p = mirror(settings({ allow: ["Read(/src/**)", "WebFetch(domain:example.com)"] }), "default");
+  test("non-Bash rules are ignored (WebFetch is handled separately as curl/wget)", () => {
+    const p = mirror(settings({ allow: ["Read(/src/**)", "Edit(/x)"] }), "default");
     expect(p.execpolicyAmendments).toEqual([]);
   });
 

@@ -123,6 +123,13 @@ function baseFor(_settings: EffectiveSettings, mode: ClaudeMode): string | undef
  * Claude's network posture as a profile's network rules: the coarse `enabled`
  * switch plus per-host allow/deny — `allowedDomains` and `WebFetch(domain:)` allow
  * rules become allows, `deniedDomains` become denies (Codex lets deny win).
+ *
+ * The per-host allowlist is the set of hosts the user has explicitly trusted, and it
+ * is the FENCE regardless of the Codex sandbox (which is a separate, bash-confinement
+ * axis): a `WebFetch(domain:x)` rule says "you may reach x", so x is allowed and other
+ * hosts aren't — you'd have to approve or allow them. Codex has no fetch tool, so we
+ * also emit an implicit `curl`/`wget` allow (see `fetchAllows`) so it can actually
+ * reach the trusted host without a prompt; this allowlist scopes WHICH hosts it hits.
  */
 function networkFor(settings: EffectiveSettings): { enabled: boolean; domains: [string, DomainAction][] } {
   const domains: [string, DomainAction][] = [];
@@ -211,11 +218,11 @@ const SAFE_DEFAULT: ClaudeMode = "default";
 export function mirror(settings: EffectiveSettings, mode: ClaudeMode): CodexPolicy {
   const approvalPolicy = approvalFor(mode);
   const approvalsReviewer = reviewerFor(mode);
-  // execpolicy allow-prefixes come from the user's `allow` Bash rules only. We do
-  // NOT add acceptEdits's fs commands here: under its `granular` policy an in-scope
-  // edit/command already auto-runs, so a fs-command *approval* only ever fires for an
-  // ESCAPE (out-of-scope) — auto-accepting that would grant what Claude prompts for.
-  const execpolicyAmendments = bashPrefixes(settings.allow);
+  // execpolicy allow-prefixes: the user's `allow` Bash rules, plus an implicit
+  // curl/wget allow for a WebFetch rule (see `fetchAllows`). We do NOT add
+  // acceptEdits's fs commands: under its `granular` policy an in-scope edit/command
+  // already auto-runs, so a fs-command *approval* only fires for an ESCAPE.
+  const execpolicyAmendments = fetchAllows(settings);
   const denyPrefixes = bashPrefixes(settings.deny);
   const profile = profileFor(settings, mode);
   return {
@@ -374,19 +381,16 @@ function reviewerFor(mode: ClaudeMode): ApprovalsReviewer | undefined {
 /**
  * Whether Codex may reach the network, mirroring Claude's ACTUAL posture.
  *
- * The correction: when Claude is not sandboxing (`sandbox.enabled` unset — the
- * common case), Claude's own tools run with FULL network, so denying it to Codex
- * would mirror *more restrictively than Claude* — the one direction we never go.
- * So network is open unless Claude is actively sandboxing. Only under Claude's
- * sandbox is network default-deny, with a non-empty (or strict) allowlist opening
- * it. (Specific host allow/deny lists map onto Codex's network policy separately;
- * here we only flip the coarse switch.)
+ * When Claude is not sandboxing (`sandbox.enabled` unset — the common case), its bash
+ * runs with FULL network, so Codex must too; denying it would mirror *more
+ * restrictively than Claude*. Under Claude's sandbox, network is default-deny, opened
+ * by a non-empty (or strict) allowlist — which can come from EITHER `sandbox.network`
+ * OR `WebFetch(domain:...)` permission rules (Claude merges both), so either flips the
+ * bool. The per-host `domains` fence (in `networkFor`) is emitted either way — it is
+ * the set of trusted hosts, orthogonal to whether the coarse switch is on.
  */
 function networkEnabled(settings: EffectiveSettings): boolean {
   if (!settings.sandboxEnabled) return true;
-  // Under Claude's sandbox the allowlist can come from EITHER sandbox.network
-  // OR `WebFetch(domain:...)` permission rules — Claude merges both into the
-  // sandbox network config, so either opening network must flip the bool.
   return (
     settings.allowedDomains.length > 0 ||
     settings.strictAllowlist === true ||
@@ -416,6 +420,25 @@ function bashPrefixes(rules: readonly string[]): string[][] {
     const prefix = bashPrefix(rule);
     if (prefix.length > 0) prefixes.push(prefix);
   }
+  return prefixes;
+}
+
+/**
+ * The execpolicy allow-prefixes for a run: the user's `allow` Bash rules, PLUS an
+ * implicit `curl`/`wget` allow whenever a `WebFetch(domain:)` rule is present.
+ *
+ * A WebFetch permission means "you may reach this host". Codex has no fetch tool, so
+ * the only way it can honour that is the shell — and it should reach the host WITHOUT
+ * a prompt, mirroring Claude's fetch tool, which runs without asking. So a WebFetch
+ * rule lets `curl`/`wget` run un-prompted; the per-host network allowlist
+ * (`networkFor`) is what scopes WHICH hosts they can actually reach, so this broad
+ * fetcher allow can only touch the trusted set. (It does grant slightly more than
+ * Claude's bash — where you'd add a separate `Bash(curl:*)` rule — but that's the
+ * deliberate, more-consistent model: trust the host, reach it however.)
+ */
+function fetchAllows(settings: EffectiveSettings): string[][] {
+  const prefixes = bashPrefixes(settings.allow);
+  if (settings.allow.some(isWebFetchDomainAllow)) prefixes.push(["curl"], ["wget"]);
   return prefixes;
 }
 

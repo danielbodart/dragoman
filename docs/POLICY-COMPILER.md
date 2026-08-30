@@ -104,10 +104,17 @@ means *no confinement AND no prompting* — that is only `sandbox-off + auto/byp
 the WebFetch tool still fetches github: the model gets access another way. So these
 rules are tool permissions, **not** Claude's bash-network config, and they do
 **not** map identically to any Codex knob (Codex reaches the network through its
-sandboxed exec, not a distinct fetch tool). The considered translation — "the user
-trusts these hosts, so let Codex's exec reach them too" → a Codex network-*allow* —
-is a cross-channel decision to verify, never an identity, and it must **never**
-become a *fence* that restricts Codex to only those hosts.
+sandboxed exec, not a distinct fetch tool).
+
+**The resolved mapping (verified):** "you may reach host x" → a Codex network **allow**
+for x PLUS an implicit **`curl`/`wget` execpolicy allow**, so Codex reaches x via the
+shell WITHOUT a prompt — the fetch tool's no-ask behaviour, in Codex's one channel.
+The per-host allowlist is the trusted-host fence, applied **regardless of the Codex
+sandbox** (a separate bash-confinement axis): a host you named is reachable, others
+aren't (you'd approve or allow them). This deliberately grants a little more than
+Claude's *bash* would — Claude keeps a separate fetch channel that bypasses the
+sandbox, which is exactly the smell we remove by folding host-trust into the one
+sandbox. See the [WebFetch item under Open](#open) for the evidence.
 
 #### Claude's permission modes (authoritative — [docs](https://code.claude.com/docs/en/permission-modes))
 
@@ -372,6 +379,17 @@ derives the whole posture from Claude.
   known way to trigger `item/permissions/requestApproval` deterministically yet, so
   shipping a grant would be untested. Needs a repro path + a decision on whether an
   approved grant is intersected with Claude's `deny` rules.
-- **WebFetch cross-channel mapping** — decide and verify how a Claude WebFetch tool
-  permission translates to Codex's sandboxed-exec network (allow, never fence).
+- **WebFetch cross-channel mapping** — ✅ resolved + verified. A `WebFetch(domain:x)`
+  rule means "you may reach host x". Codex has no fetch tool, so the mirror honours it
+  two ways at once: a network **allow** for x AND an implicit **`curl`/`wget`
+  execpolicy allow** (`fetchAllows`) — so Codex reaches x via the shell WITHOUT a
+  prompt, the way Claude's fetch tool would. The per-host allowlist scopes WHICH hosts
+  the fetchers can hit, and it's the trusted-host fence **regardless of the Codex
+  sandbox** (a separate, bash-confinement axis). Verified (`webfetch.integration.test.ts`,
+  `webfetch.experiment.ts`): under manual, a WebFetch-allowed host is reached with NO
+  elicitation; a non-allowlisted host is blocked (the command runs un-prompted, the
+  network fences it). This grants slightly more than Claude's *bash* would (there you'd
+  add a separate `Bash(curl:*)`), but it's the deliberate, more-consistent model — trust
+  the host, reach it however — since Claude's built-in tools bypassing the sandbox is
+  the smell we're removing.
 - **Caching decorator** over `provision` (per-run spawn is the core; reuse later).
