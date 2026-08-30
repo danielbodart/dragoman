@@ -66,6 +66,48 @@ describe("beatOf", () => {
       .toEqual({ at: 9, text: "turn failed" });
   });
 
+  test("a completed auto-approval surfaces the decision, risk and action", () => {
+    const n: Notification = {
+      emittedAtMs: 3000,
+      method: "item/autoApprovalReview/completed",
+      params: {
+        threadId: "t1", turnId: "turn1", startedAtMs: 2999, completedAtMs: 3000,
+        reviewId: "rev1", targetItemId: "exec-1", decisionSource: "agent",
+        review: { status: "approved", riskLevel: "low", userAuthorization: "high", rationale: "ok" },
+        action: { type: "command", source: "agent", command: 'echo "hi"', cwd: "/repo" },
+      } as never,
+    };
+    expect(beatOf(n)).toEqual({ at: 3000, text: 'auto-approved (risk: low): echo "hi"' });
+  });
+
+  test("a denied auto-approval reads 'auto-denied' and drops absent risk", () => {
+    const n: Notification = {
+      emittedAtMs: 3000,
+      method: "item/autoApprovalReview/completed",
+      params: {
+        threadId: "t1", turnId: "turn1", startedAtMs: 2999, completedAtMs: 3000,
+        reviewId: "rev1", targetItemId: null, decisionSource: "agent",
+        review: { status: "denied", riskLevel: null, userAuthorization: null, rationale: null },
+        action: { type: "networkAccess", target: "https://x.com", host: "x.com", protocol: "https", port: 443 },
+      } as never,
+    };
+    expect(beatOf(n)).toEqual({ at: 3000, text: "auto-denied: network x.com:443" });
+  });
+
+  test("a timed-out auto-approval reads naturally", () => {
+    const n: Notification = {
+      emittedAtMs: 3000,
+      method: "item/autoApprovalReview/completed",
+      params: {
+        threadId: "t1", turnId: "turn1", startedAtMs: 2999, completedAtMs: 3000,
+        reviewId: "rev1", targetItemId: "exec-1", decisionSource: "agent",
+        review: { status: "timedOut", riskLevel: "high", userAuthorization: "unknown", rationale: null },
+        action: { type: "applyPatch", cwd: "/repo", files: ["/repo/a", "/repo/b"] },
+      } as never,
+    };
+    expect(beatOf(n)).toEqual({ at: 3000, text: "auto-review timed out (risk: high): patch 2 file(s)" });
+  });
+
   test("an error notification surfaces the message", () => {
     const n: Notification = {
       emittedAtMs: 7,

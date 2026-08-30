@@ -15,9 +15,11 @@
  *     official plugin's synchronous `-32601` hang (PLAN §5).
  *
  *  2. The notification loop: one `for await` over the feed, folding each
- *     notification through the pure `beatOf` filter and overwriting the matching
- *     run's `latestBeat`. Overwrite, not append — that is the "sparse heartbeat"
- *     (PLAN §6); the firehose in between is dropped by construction.
+ *     notification through the pure `beatOf` filter and appending the matching
+ *     run's beats to `pendingBeats` (with `latestBeat` as the newest snapshot).
+ *     The buffer is the "sparse heartbeat" (PLAN §6) — the firehose in between is
+ *     dropped by construction (never a beat); codex_status drains it in order, so
+ *     no milestone is lost even when two land between polls.
  */
 import { beatOf, threadIdOf } from "./heartbeat.ts";
 import type { AppServerConn, Notification, ServerRequest } from "./codex.ts";
@@ -304,6 +306,10 @@ function apply(notification: Notification, runs: ThreadRuns): void {
   const beat = beatOf(notification);
   if (beat) {
     run.latestBeat = beat;
+    // Append, don't overwrite: codex_status drains this in order, so a beat that
+    // is instantly superseded (an auto-approval between `running:` and `ran:`) is
+    // still delivered rather than clobbered at the polling boundary.
+    (run.pendingBeats ??= []).push(beat);
     changed = true;
   }
 

@@ -138,27 +138,45 @@ async function statusCodex(runs: ThreadRuns, args: Record<string, unknown>): Pro
   const handle = String(args.handle ?? "");
   if (!runs.status(handle)) return `No Codex task with handle "${handle}".`;
 
-  // Long-poll: block until the run advances past its current revision (or is
-  // already terminal), so this returns the instant Codex makes progress rather
-  // than on a fixed interval. Times out to a "still running" line the caller
-  // re-polls, staying under the tool-call ceiling.
-  const since = runs.revision(handle);
-  const { snapshot } = await runs.waitForUpdate(handle, since, STATUS_LONGPOLL_MS);
-  const run = snapshot ?? runs.status(handle);
+  // Long-poll unless there is already something undelivered: block until the run
+  // advances past its current revision (or is terminal), so this returns the
+  // instant Codex makes progress rather than on a fixed interval. If milestones
+  // are already buffered we skip the wait and hand them over now — never leaving a
+  // beat sitting until the next bump. Times out to a "still running" line the
+  // caller re-polls, staying under the tool-call ceiling.
+  if (!runs.hasPendingBeats(handle)) {
+    const since = runs.revision(handle);
+    await runs.waitForUpdate(handle, since, STATUS_LONGPOLL_MS);
+  }
+
+  const run = runs.status(handle);
   if (!run) return `No Codex task with handle "${handle}".`;
 
-  const beat = run.latestBeat ? ` — ${run.latestBeat.text}` : "";
+  // Drain the milestone sequence — each beat delivered exactly once, in order.
+  const beats = runs.drainBeats(handle);
   switch (run.status) {
     case "starting":
     case "running":
-      return `Running${beat}.`;
+      return runningLine("Running", beats);
     case "waiting-approval":
-      return `Waiting for your approval${beat}.`;
+      return runningLine("Waiting for your approval", beats);
     case "done":
       return `Done. ${run.result ?? "(no result text)"}`;
     case "error":
       return `Errored: ${run.error ?? "unknown error"}.`;
   }
+}
+
+/**
+ * Render an in-flight status with the milestones drained this poll. No new beat →
+ * the bare state line (nothing has advanced). One → the compact `Prefix — beat.`
+ * form. Several (they piled up between polls) → the prefix over a bulleted list,
+ * oldest first, so a superseded milestone like an auto-approval is still seen.
+ */
+function runningLine(prefix: string, beats: readonly { text: string }[]): string {
+  if (beats.length === 0) return `${prefix}.`;
+  if (beats.length === 1) return `${prefix} — ${beats[0]!.text}.`;
+  return `${prefix}:\n${beats.map((b) => `  • ${b.text}`).join("\n")}`;
 }
 
 /** Wrap a string as an MCP tool result. */

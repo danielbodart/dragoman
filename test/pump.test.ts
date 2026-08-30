@@ -131,6 +131,31 @@ describe("codex_run / codex_status", () => {
     await Bun.sleep(1);
     expect(runs.status(threadId)?.latestBeat?.text).toBe("starting turn");
   });
+
+  test("beats pile up between polls and drain in order — an auto-approval is not clobbered", async () => {
+    const { conn, runs, threadId } = bridge();
+    await runs.start("do the thing", "/repo");
+    const cmd = { type: "commandExecution", id: "c1", pluginId: null, scriptPath: null, command: 'echo "hi"', cwd: "/repo", processId: null, source: "agent", status: "inProgress", commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null } as ThreadItem;
+
+    // Three milestones land back-to-back before any status poll: the command
+    // starting, the guardian silently auto-approving it, then it completing.
+    conn.emit({ emittedAtMs: 1600, method: "item/started", params: { item: cmd, threadId, turnId: "turn1", startedAtMs: 1600 } });
+    conn.emit({ emittedAtMs: 1601, method: "item/autoApprovalReview/completed", params: { threadId, turnId: "turn1", startedAtMs: 1600, completedAtMs: 1601, reviewId: "r1", targetItemId: "c1", decisionSource: "agent", review: { status: "approved", riskLevel: "low", userAuthorization: "high", rationale: null }, action: { type: "command", source: "agent", command: 'echo "hi"', cwd: "/repo" } } as never });
+    conn.emit({ emittedAtMs: 1602, method: "item/completed", params: { item: cmd, threadId, turnId: "turn1", completedAtMs: 1602 } });
+    await Bun.sleep(1);
+
+    // The middle beat would be lost under a single overwritten slot; the drain
+    // hands back all three, oldest first — the auto-approval survives.
+    expect(runs.hasPendingBeats(threadId)).toBe(true);
+    expect(runs.drainBeats(threadId).map((b) => b.text)).toEqual([
+      'running: echo "hi"',
+      'auto-approved (risk: low): echo "hi"',
+      'ran: echo "hi"',
+    ]);
+    // Drained exactly once: a second poll has nothing left to deliver.
+    expect(runs.hasPendingBeats(threadId)).toBe(false);
+    expect(runs.drainBeats(threadId)).toEqual([]);
+  });
 });
 
 describe("the approval bridge — the anti-hang property", () => {

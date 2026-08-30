@@ -13,6 +13,8 @@
 import type { Notification } from "./codex.ts";
 import type { Beat } from "./model.ts";
 import type { ThreadItem } from "../generated/codex-protocol/ts/v2/ThreadItem.ts";
+import type { ItemGuardianApprovalReviewCompletedNotification } from "../generated/codex-protocol/ts/v2/ItemGuardianApprovalReviewCompletedNotification.ts";
+import type { GuardianApprovalReviewAction } from "../generated/codex-protocol/ts/v2/GuardianApprovalReviewAction.ts";
 
 /** The `threadId` a notification concerns, or undefined for feed-wide (account/app/model) events. */
 export function threadIdOf(notification: Notification): string | undefined {
@@ -39,10 +41,51 @@ export function beatOf(notification: Notification): Beat | undefined {
       return itemBeat(notification.params.item, "done", at);
     case "turn/completed":
       return { at, text: notification.params.turn.status === "failed" ? "turn failed" : "turn complete" };
+    case "item/autoApprovalReview/completed":
+      return approvalBeat(notification.params, at);
     case "error":
       return { at, text: `error: ${notification.params.error.message}` };
     default:
       return undefined;
+  }
+}
+
+/**
+ * A beat for a completed auto-approval review — Codex's internal guardian
+ * deciding, without a human prompt, whether an action clears the sandbox wall.
+ * Under `approvalPolicy: granular` these fire silently; surfacing the decision
+ * (and what it was about) makes the otherwise-invisible auto-approval visible in
+ * the heartbeat, so a watcher sees *why* a run sailed past a command that would
+ * normally prompt. `started`, `guardianWarning` (a redundant human summary of
+ * this same decision) and `strictReviewRequired` are not milestones here.
+ */
+function approvalBeat(params: ItemGuardianApprovalReviewCompletedNotification, at: number): Beat {
+  const { status, riskLevel } = params.review;
+  const verb =
+    status === "approved" ? "auto-approved"
+    : status === "denied" ? "auto-denied"
+    : `auto-review ${status === "timedOut" ? "timed out" : status}`;
+  const risk = riskLevel ? ` (risk: ${riskLevel})` : "";
+  return { at, text: `${verb}${risk}: ${actionSummary(params.action)}` };
+}
+
+/** A short, coarse label for the action an approval review decided on. */
+function actionSummary(action: GuardianApprovalReviewAction): string {
+  switch (action.type) {
+    case "command":
+      return action.command;
+    case "execve":
+      return [action.program, ...action.argv].join(" ");
+    case "writeStdin":
+      return "write stdin";
+    case "applyPatch":
+      return `patch ${action.files.length} file(s)`;
+    case "networkAccess":
+      return `network ${action.host}:${action.port}`;
+    case "mcpToolCall":
+      return `${action.server}.${action.toolName}`;
+    case "requestPermissions":
+      return "request permissions";
   }
 }
 

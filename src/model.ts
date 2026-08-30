@@ -8,8 +8,11 @@
  * A single coarse status line — one milestone in a Codex run.
  *
  * The heartbeat design (PLAN §6) is "a filter, not a pipe": the firehose of
- * ~80 notification types is collapsed to a sparse sequence of these, and only
- * the *latest* one is retained per run. A beat is a milestone, not a log line.
+ * ~80 notification types is collapsed to a sparse sequence of these. Each beat
+ * is buffered (`pendingBeats`) and delivered to the caller exactly once, in
+ * order — so a milestone that is instantly superseded (an auto-approval landing
+ * between a command's `running:` and `ran:`) is never silently dropped at the
+ * polling boundary. A beat is a milestone, not a log line.
  */
 export interface Beat {
   /** When Codex emitted the notification this beat came from (ms), or our clock. */
@@ -34,9 +37,11 @@ export type RunStatus = "starting" | "running" | "waiting-approval" | "done" | "
  * The bridge's live record of one Codex run.
  *
  * The background pump mutates this as notifications arrive; `codex_status` reads
- * it with no I/O at all. `latestBeat` is overwritten, never appended — that
- * overwrite *is* the "sparse heartbeat" (PLAN §6): the firehose in between is
- * dropped by construction, never stored.
+ * it with no I/O at all. Each milestone is appended to `pendingBeats` and drained
+ * by the next `codex_status` — so the heartbeat is delivered as the sparse
+ * *sequence* it was always meant to be, losing no beat at the polling boundary.
+ * The firehose between milestones is still dropped by construction (never a beat,
+ * never stored); `latestBeat` retains only the most recent, for a quick snapshot.
  */
 export interface RunRecord {
   readonly handle: RunHandle;
@@ -51,7 +56,12 @@ export interface RunRecord {
    * for `acceptEdits`), or refuse (`decline`, for `dontAsk`). */
   readonly fileChange?: "elicit" | "accept" | "decline";
   status: RunStatus;
+  /** The most recent milestone — a cheap snapshot of "where is it right now". */
   latestBeat?: Beat;
+  /** Milestones the pump has recorded but `codex_status` has not yet delivered,
+   * oldest first. Appended by the pump, drained (emptied) on each status poll —
+   * this buffer is what makes the heartbeat lossless across the polling boundary. */
+  pendingBeats?: Beat[];
   /** The final assistant message / turn result, once `status` is "done". */
   result?: string;
   /** A human-facing error string, once `status` is "error". */

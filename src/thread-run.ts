@@ -18,7 +18,7 @@
 import { mirror, resolveMode, type CodexPolicy } from "./mirror.ts";
 import { readSettings as readSettingsFromDisk, type EffectiveSettings } from "./settings.ts";
 import type { AppServerConn } from "./codex.ts";
-import type { RunHandle, RunRecord } from "./model.ts";
+import type { Beat, RunHandle, RunRecord } from "./model.ts";
 import type { ThreadStartParams } from "../generated/codex-protocol/ts/v2/ThreadStartParams.ts";
 import type { ThreadStartResponse } from "../generated/codex-protocol/ts/v2/ThreadStartResponse.ts";
 import type { TurnStartResponse } from "../generated/codex-protocol/ts/v2/TurnStartResponse.ts";
@@ -127,6 +127,7 @@ export class ThreadRuns {
     this.runs.set(handle, {
       handle,
       status: "starting",
+      pendingBeats: [],
       execpolicyAmendments: policy.execpolicyAmendments,
       denyPrefixes: policy.denyPrefixes,
       commandFallback: policy.commandFallback,
@@ -166,6 +167,26 @@ export class ThreadRuns {
   /** The current snapshot of a run, or undefined for an unknown handle. No I/O. */
   status(handle: RunHandle): RunSnapshot | undefined {
     return this.runs.get(handle);
+  }
+
+  /** Whether a run has milestones the caller hasn't been shown yet — the fast-path
+   * signal that `codex_status` has something to return without parking. */
+  hasPendingBeats(handle: RunHandle): boolean {
+    return (this.runs.get(handle)?.pendingBeats?.length ?? 0) > 0;
+  }
+
+  /**
+   * Remove and return a run's undelivered milestones, oldest first — the drain
+   * that makes the heartbeat a lossless sequence. Each beat is handed out exactly
+   * once; a superseded milestone rides here rather than being clobbered by the
+   * next one. Empty (never undefined) for an unknown or quiet run.
+   */
+  drainBeats(handle: RunHandle): readonly Beat[] {
+    const run = this.runs.get(handle);
+    if (!run?.pendingBeats || run.pendingBeats.length === 0) return [];
+    const drained = run.pendingBeats;
+    run.pendingBeats = [];
+    return drained;
   }
 
   /** The live record for the pump to mutate, or undefined if the handle is unknown. */
