@@ -30,16 +30,20 @@ export interface Beat {
  * terminal outcome. All producers `append` a `RunEvent`; `codex_status` drains the
  * log and renders it — so a new source can never reintroduce the "we dropped that
  * one" bug, because there is exactly one place state is kept (docs/PLAN.md: the
- * back-channel table). `kind` exists only so the renderer can phrase the terminal
- * outcome ("Done. …") differently from in-flight progress; every non-terminal
- * source is `progress`.
+ * back-channel table). `kind` distinguishes the terminal outcome ("Done. …" /
+ * "Errored …") from in-flight entries so the renderer can phrase it, and marks a
+ * `message` — Codex's own words mid-run, its back-channel to the driving agent —
+ * apart from a `progress` milestone (a tool step). In-flight entries (`progress`,
+ * `message`) render the same; the split lets a consumer tell "Codex said X" from
+ * "ran: X".
  */
-export type RunEventKind = "progress" | "result" | "error";
+export type RunEventKind = "progress" | "message" | "result" | "error";
 
 export interface RunEvent {
   /** When the source emitted this (ms), or our clock. */
   readonly at: number;
-  /** Which phrasing the renderer should give it. Non-terminal sources are `progress`. */
+  /** What the entry is: a `progress` milestone, a `message` from Codex, or the
+   * terminal `result`/`error`. In-flight kinds render alike. */
   readonly kind: RunEventKind;
   /** The human-facing one-liner. */
   readonly text: string;

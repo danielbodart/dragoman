@@ -403,6 +403,17 @@ function apply(notification: Notification, runs: ThreadRuns): void {
     }
   }
 
+  // Codex's own words mid-run — an agentMessage item completing — are its
+  // back-channel to the driving agent (docs/PLAN.md): surface them as `message`
+  // events so a note Codex emits reaches the agent on its next poll. The FINAL
+  // message also rides turn/completed as the `result`; the dedupe there upgrades a
+  // just-streamed final message in place rather than delivering it twice.
+  const message = agentMessageOf(notification);
+  if (message) {
+    runs.append(handle, { at, kind: "message", text: message });
+    changed = true;
+  }
+
   if (notification.method === "turn/started") {
     // Track the live turn id (fresh on each turn, incl. continuation turns) so a
     // cancel/steer always names the currently-active turn.
@@ -420,7 +431,16 @@ function apply(notification: Notification, runs: ThreadRuns): void {
       // assistant message, if any, is the outcome event.
       run.status = "done";
       const result = lastAgentMessage(turn);
-      if (result) runs.append(handle, { at, kind: "result", text: result });
+      if (result) {
+        const tail = run.events.at(-1);
+        if (tail && tail.kind === "message" && tail.text === result) {
+          // The final message just streamed as a `message` this same poll — reclassify
+          // it as the result rather than delivering the same text twice.
+          run.events[run.events.length - 1] = { ...tail, kind: "result" };
+        } else {
+          runs.append(handle, { at, kind: "result", text: result });
+        }
+      }
     }
     changed = true;
   } else if (notification.method === "error") {
@@ -446,6 +466,17 @@ function runFor(notification: Notification, runs: ThreadRuns): RunRecord | undef
   if (threadId) return runs.record(threadId);
   const handles = runs.handles();
   return handles.length === 1 ? runs.record(handles[0]!) : undefined;
+}
+
+/**
+ * Codex's own message from a completing `agentMessage` item — its mid-run
+ * back-channel to the driving agent — or undefined for any other notification.
+ * The final one also arrives inside turn/completed as the result; apply() dedupes.
+ */
+function agentMessageOf(notification: Notification): string | undefined {
+  if (notification.method !== "item/completed") return undefined;
+  const item = notification.params.item;
+  return item.type === "agentMessage" ? item.text ?? undefined : undefined;
 }
 
 /** The final assistant message in a completed turn, if any, as the run's result. */

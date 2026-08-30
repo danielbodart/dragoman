@@ -47,7 +47,10 @@ run is a self-contained hand-off. Everything Codex needs must be in the prompt.
    `Running — …`, `Waiting for your approval — …`, `Done. …`, or `Errored: …`.
    Keep polling until `Done.` or `Errored:`. **Narrate progress in your own voice** —
    a short, human line per meaningful beat ("Codex is running the test suite…"),
-   not the raw string, and not silence.
+   not the raw string, and not silence. Some lines are **Codex's own words** — a note
+   it emitted mid-run, not a tool step ("I'll start with the parser, then the lexer").
+   Relay those as Codex speaking ("Codex says it's starting with the parser"), not as
+   your own narration.
 
 5. **Approvals are handled for you.** When Codex needs permission your posture
    doesn't pre-grant, Dragoman surfaces it to the user as a native Claude Code

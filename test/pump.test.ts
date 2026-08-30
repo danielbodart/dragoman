@@ -490,3 +490,55 @@ describe("long-poll (waitForUpdate) — event-driven status", () => {
     expect(revision).toBe(since); // nothing advanced it
   });
 });
+
+describe("Codex back-channel — mid-run agent messages", () => {
+  const agentMessageItem = (text: string): ThreadItem =>
+    ({ type: "agentMessage", id: "am1", text, phase: null, memoryCitation: null, delivery: null } as ThreadItem);
+
+  const agentMessageCompleted = (threadId: string, text: string): Notification => ({
+    emittedAtMs: 1700,
+    method: "item/completed",
+    params: { item: agentMessageItem(text), threadId, turnId: "turn1", completedAtMs: 1700 },
+  });
+
+  test("a mid-run agentMessage surfaces as a `message` event on the timeline", async () => {
+    const { conn, runs, threadId } = bridge();
+    await runs.start("go", "/repo");
+    conn.emit(agentMessageCompleted(threadId, "I'll start with the parser."));
+    await Bun.sleep(1);
+
+    const events = runs.drain(threadId);
+    expect(events).toEqual([{ at: 1700, kind: "message", text: "I'll start with the parser." }]);
+    // Still running — a message is not terminal.
+    expect(runs.status(threadId)?.status).not.toBe("done");
+  });
+
+  test("the final message is not delivered twice: a just-streamed message is upgraded to the result", async () => {
+    const { conn, runs, threadId } = bridge();
+    await runs.start("go", "/repo");
+    // The final message streams as its own item/completed, then turn/completed carries
+    // the same text as the turn's result — in the SAME poll window (no drain between).
+    conn.emit(agentMessageCompleted(threadId, "all done"));
+    conn.emit(turnCompleted(threadId, "all done"));
+    await Bun.sleep(1);
+
+    const events = runs.drain(threadId);
+    // One event, upgraded in place — it keeps the message's own timestamp (1700).
+    expect(events).toEqual([{ at: 1700, kind: "result", text: "all done" }]);
+    expect(runs.status(threadId)?.status).toBe("done");
+  });
+
+  test("a message already drained before completion still yields the result on the done poll", async () => {
+    const { conn, runs, threadId } = bridge();
+    await runs.start("go", "/repo");
+    conn.emit(agentMessageCompleted(threadId, "all done"));
+    await Bun.sleep(1);
+    // The caller polled and drained the message mid-run.
+    expect(runs.drain(threadId).map((e) => e.kind)).toEqual(["message"]);
+
+    // Completion still delivers the result, since the buffer tail no longer holds it.
+    conn.emit(turnCompleted(threadId, "all done"));
+    await Bun.sleep(1);
+    expect(runs.drain(threadId)).toEqual([{ at: 2000, kind: "result", text: "all done" }]);
+  });
+});

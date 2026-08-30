@@ -1,10 +1,12 @@
 # Plan: the full peer-agent lifecycle
 
-_Status: the foundation, the production `diagnostics` probe, and all three
-lifecycle tools (`codex_cancel`, `codex_steer`, `codex_continue`) have landed —
-wired into the MCP surface and covered by `test/lifecycle.test.ts`. Still open: the
-`codex-agent` messaging relay, and the two secondary reporting tools
-(`codex_review`, `codex_diff`)._
+_Status: the foundation, the production `diagnostics` probe, all three lifecycle
+tools (`codex_cancel`, `codex_steer`, `codex_continue`), the unified event-log
+substrate, and the Codex→agent back-channel (mid-run `agentMessage`s as events) have
+landed — wired into the MCP surface and covered by `test/lifecycle.test.ts` /
+`test/pump.test.ts`. Still open: verifying the `codex-agent` messaging relay
+end-to-end in a live run, and prototyping `codex_review`. `codex_diff` was dropped
+(see Secondary tools)._
 
 ## Why
 
@@ -176,11 +178,14 @@ wrong audience. So the back-channel splits by *who the message is for*:
 Only the last case is elicitation's job — Codex asking the *human* something, exactly
 like an approval. For Codex to send the *driving agent* an in-flight note, the existing
 `codex_status` heartbeat is already the channel: Codex's `agentMessage` items flow
-through the pump as notifications. On the unified event log this is now literally **one
-`append`** — surface a **mid-run** `agentMessage` as a `progress` (or `message`) event;
-today only the final one becomes the terminal `result` event, so intermediate
-commentary Codex emits is dropped. No new channel, nothing misrouted to the user, and —
-because of the substrate above — no risk of it clobbering another source's message.
+through the pump as notifications. **LANDED** on the unified event log as one
+`append` — a mid-run `agentMessage` item/completed becomes a `message` event
+(`pump.ts` `agentMessageOf`), so Codex's own words reach the driving agent on its next
+poll. The final message still rides `turn/completed` as the `result`; a just-streamed
+final message is upgraded in place rather than delivered twice (the dedupe in
+`apply`). No new channel, nothing misrouted to the user, and — because of the substrate
+above — no risk of it clobbering another source's message. Covered by the back-channel
+tests in `test/pump.test.ts`.
 
 (Elicitation is not a second channel here: it is server→human question-asking, not a
 way for Claude to push a message *into* a run.)
@@ -191,21 +196,23 @@ agent — not a local workaround. Noted as the durable path, not pursued now.
 
 ## Secondary tools
 
-### `codex_review(handle-or-target)` → `review/start`
+### `codex_review(target)` → `review/start` — worth prototyping
 
 Codex's *first-class* review mode: structured findings against a `ReviewTarget`
-(`uncommittedChanges` | `baseBranch` | `commit` | `custom`), delivered inline or on
-a detached thread. The `codex-agent` already "reviews" via a freeform prompt; this
-yields structured output instead. It is a specialization, not a lifecycle gap — it
-could ship as a `codex_run` posture/target variant rather than a standalone tool.
-Lower priority than the lifecycle three.
+(`uncommittedChanges` | `baseBranch` | `commit` | `custom`), delivered inline or on a
+detached thread. The `codex-agent` already "reviews" via a freeform prompt; this yields
+structured output instead. This is the one secondary tool worth building — a review is
+plausibly where Codex brings *distinct* value (a genuine outside read with structured
+output), not just a second way to do what the freeform path already does. Approach:
+**prototype it and judge the output** before committing to a tool shape — it could ship
+as a `codex_run` target variant rather than a standalone tool.
 
-### `codex_diff(handle)` → `gitDiffToRemote`
+### `codex_diff` → `gitDiffToRemote` — DROPPED
 
-`gitDiffToRemote({ cwd })` returns `{ sha, diff }` — the exact change Codex
-produced. Lets the agent report *precisely* what changed on hand-back instead of
-narrating it from memory. Small, purely additive reporting polish; pairs naturally
-with the `codex-agent`'s result summary.
+`gitDiffToRemote({ cwd })` returns `{ sha, diff }`. Dropped: the driving agent (Claude)
+would just run `git diff` itself — it has shell access and the cwd — so a dedicated tool
+adds a round-trip and an app-server dependency for something already trivially at hand.
+No real reach here, unlike a review. (Kept in the record so the call isn't relitigated.)
 
 ## Diagnostics — production observability (LANDED)
 
@@ -228,11 +235,15 @@ surface does. Changes made:
 3. **`codex_cancel`** — smallest, exercises `turnId` end-to-end, no disposal change. DONE.
 4. **`codex_steer`** — same precondition, adds the in-flight-turn injection path. DONE.
 5. **`codex_continue`** — the structural one (resume + re-mirror). DONE.
-6. **`codex-agent` relay** — teach the subagent to turn inbound `SendMessage` into
-   `codex_steer` (agent-definition change, no server change). OPEN.
-7. **Secondary** — `codex_review`, `codex_diff`, as appetite allows. OPEN.
+6. **Unified event log + `agentMessage` back-channel.** DONE.
+7. **`codex-agent` relay** — the agent-definition guidance is written (turn an inbound
+   message into `codex_steer`/`codex_cancel`, relay Codex's own `message` events back).
+   OPEN: verify end-to-end in a live run that a mid-run `SendMessage` actually reaches
+   the subagent between polls — no code expected, just the empirical check.
+8. **Secondary — `codex_review` only.** Prototype `review/start` and judge its output;
+   `codex_diff` dropped (Claude runs `git diff` itself). OPEN.
 
 The landed tools sit behind the existing `FakeAppServer` unit seam
-(`test/lifecycle.test.ts`); a ratcheted live integration test for the resume +
-re-mirror path is the natural next verification step, matching how `codex_run` is
-locked.
+(`test/lifecycle.test.ts`, `test/pump.test.ts`); a ratcheted live integration test for
+the resume + re-mirror path is the natural next verification step, matching how
+`codex_run` is locked.
