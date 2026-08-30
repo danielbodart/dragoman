@@ -20,8 +20,8 @@ also a genuine outside pair of eyes for a second implementation, a review, or a 
 root-cause hunt. Dragoman lets Claude hand any of these to Codex and hear the answer
 back in Codex's own voice.
 
-And Codex is a superb agent trapped behind a batch-job interface. The official plugin
-runs it like a black box: when Codex pauses to ask _"may I run this?"_ the plugin
+The offical Codex plugin is a superb agent trapped behind a batch-job interface. It 
+runs as a black box: when Codex pauses to ask _"may I run this?"_ the plugin
 **rejects the request and hangs** — your only escape is to switch the sandbox off
 (`danger-full-access`) and hope. You watch **one final blob**, never the work in
 flight. And **none of Claude's permissions, modes or sandbox rules reach Codex**, so
