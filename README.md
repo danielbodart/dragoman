@@ -2,9 +2,9 @@
 
 # Dragoman
 
-A Claude Code plugin that translates between Claude and Codex so that Codex feels native. 
-Dragoman translates between them — so Codex's approvals, progress, and permissions feel 
-like they were built into Claude all along.
+A Claude Code plugin that translates between Claude and Codex so that Codex feels
+native — its approvals, progress, and permissions feel like they were built into
+Claude all along.
 
 > A _dragoman_ was the **interpreter-diplomat** who let two courts speaking **different
 languages** do business. That is exactly this tool's job.
@@ -20,8 +20,8 @@ also a genuine outside pair of eyes for a second implementation, a review, or a 
 root-cause hunt. Dragoman lets Claude hand any of these to Codex and hear the answer
 back in Codex's own voice.
 
-The offical Codex plugin is a superb agent trapped behind a batch-job interface. It 
-runs as a black box: when Codex pauses to ask _"may I run this?"_ the plugin
+But the official Codex plugin traps that agent behind a batch-job interface, running
+it as a black box: when Codex pauses to ask _"may I run this?"_ the plugin
 **rejects the request and hangs** — your only escape is to switch the sandbox off
 (`danger-full-access`) and hope. You watch **one final blob**, never the work in
 flight. And **none of Claude's permissions, modes or sandbox rules reach Codex**, so
