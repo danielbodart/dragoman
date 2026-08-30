@@ -64,10 +64,15 @@ describe("filesystem write-carve is honoured (profile + runtimeWorkspaceRoots â†
           effective,
         );
 
+        // acceptEdits gives a WRITABLE workspace (workspace-write) â€” the premise of a
+        // write-carve test. (dontAsk is readOnly, so the writable-root write itself
+        // would be refused, and there'd be nothing to carve out of.) In-workspace
+        // writes auto-run under acceptEdits's granular policy; the carved subpath is
+        // denied by the profile's filesystem table, so `sub/keep.txt` stays put.
         const handle = await runs.start(
           "Run exactly this shell command and report nothing else: printf X >> top.txt; printf X >> sub/keep.txt; echo DONE",
           cwd,
-          "dontAsk",
+          "acceptEdits",
         );
         const final = await settle(runs, handle);
         expect(final.status).toBe("done");

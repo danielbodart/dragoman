@@ -3,10 +3,13 @@
  *
  * An approval only arises from a real model turn, and (verified against
  * codex-cli 0.150.1) the app-server round-trips `item/commandExecution/requestApproval`
- * to the client under `approvalPolicy: untrusted` — i.e. Claude's `plan` posture.
- * Under `on-request` Codex self-approves via an internal `autoApprovalReview` and
- * rarely asks the client, so `plan` is the reliable trigger. The command arrives
- * shell-wrapped (`/bin/bash -lc '<cmd>'`), which the pump unwraps.
+ * to the client under `approvalPolicy: untrusted` — i.e. Claude's `default`/manual
+ * posture, which elicits (commandFallback `elicit`, reviewer `user`). Under
+ * `on-request` Codex self-approves via an internal `autoApprovalReview` and rarely
+ * asks the client, so `untrusted` is the reliable trigger. (`plan` is also
+ * `untrusted` but now DECLINES its fallback and runs Codex's native plan mode — the
+ * model refuses writes — so it no longer routes to the human; manual is the probe.)
+ * The command arrives shell-wrapped (`/bin/bash -lc '<cmd>'`), which the pump unwraps.
  *
  * Each test wires the full `ThreadRuns` + pump stack against real Codex with a
  * `ScriptedElicitation` for the human, and spends ONE turn — ratcheted via
@@ -19,13 +22,13 @@ import { verifyOnce } from "./ratchet.ts";
 import { ScriptedElicitation, profiledRuns, settle, settings, withTempDir } from "./harness.ts";
 import type { EffectiveSettings } from "../../src/settings.ts";
 
-/** Run a single `plan`-posture Codex turn wired to a scripted elicitation. */
+/** Run a single manual-posture (`default`) Codex turn wired to a scripted elicitation. */
 async function turn(effective: EffectiveSettings, prompt: string): Promise<{ asks: number; status: string }> {
   const elicitation = new ScriptedElicitation("decline");
   return withTempDir((homeParent) =>
     withTempDir(async (cwd) => {
       const runs = profiledRuns(effective, elicitation, homeParent);
-      const handle = await runs.start(prompt, cwd, "plan");
+      const handle = await runs.start(prompt, cwd, "default");
       const final = await settle(runs, handle);
       return { asks: elicitation.asks.length, status: final.status };
     }),

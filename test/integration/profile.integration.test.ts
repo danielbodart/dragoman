@@ -46,7 +46,11 @@ describe("profile route enforces per-host network through ThreadRuns", () => {
         );
         const final = await settle(runs, handle);
         expect(final.status).toBe("done");
-        expect(final.result ?? "").toMatch(/blocked|denied|policy/i);
+        // The denied domain must be refused. Codex's wording for a sandbox/network
+        // rejection varies by version (0.150.1: "rejected by the environment"), so
+        // match the family, not one phrase — a non-zero curl rc / rejection, never a
+        // 2xx. (This asserts the network table bit, independent of the mode.)
+        expect(final.result ?? "").toMatch(/blocked|denied|policy|rejected|environment|rc=[^0]/i);
       }),
     );
   });

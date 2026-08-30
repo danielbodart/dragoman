@@ -123,6 +123,21 @@ export class ThreadRuns {
     const thread = (await conn.request("thread/start", params)) as ThreadStartResponse;
     const handle = thread.thread.id;
 
+    // Native plan mode (Claude's `plan`): select Codex's own plan posture on the
+    // turn. Its `settings.model` is REQUIRED and OVERRIDES the model, so we fill it
+    // with the model Codex just resolved for this thread (echoing it, not changing
+    // it) plus the thread's reasoning effort; `developer_instructions: null` means
+    // "use Codex's built-in plan instructions". `mirror` (pure) decides only the
+    // mode; the model — a Codex-side fact — is resolved here at the IO edge.
+    const collaborationMode = policy.collaborationMode
+      ? {
+          collaborationMode: {
+            mode: policy.collaborationMode,
+            settings: { model: thread.model, reasoning_effort: thread.reasoningEffort, developer_instructions: null },
+          },
+        }
+      : {};
+
     this.provisioned.set(handle, provisioned); // torn down when the run settles
     this.runs.set(handle, {
       handle,
@@ -149,6 +164,7 @@ export class ThreadRuns {
         // Profile threads re-assert their profile per turn; the danger thread
         // inherits its sandbox from thread/start (nothing to override here).
         ...(policy.profile ? { permissions: policy.profile.id } : {}),
+        ...collaborationMode,
       })
       .then((response) => {
         const turn = response as TurnStartResponse;

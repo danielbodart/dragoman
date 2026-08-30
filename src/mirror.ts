@@ -14,6 +14,7 @@ import type { DomainAction, FsAccess, ManagedProfile, ProfileFilesystem } from "
 import type { AskForApproval } from "../generated/codex-protocol/ts/v2/AskForApproval.ts";
 import type { ApprovalsReviewer } from "../generated/codex-protocol/ts/v2/ApprovalsReviewer.ts";
 import type { ExecPolicyAmendment } from "../generated/codex-protocol/ts/ExecPolicyAmendment.ts";
+import type { ModeKind } from "../generated/codex-protocol/ts/ModeKind.ts";
 
 /**
  * Claude's permission modes (see code.claude.com/docs/en/permission-modes).
@@ -66,6 +67,17 @@ export interface CodexPolicy {
    * anyway, so that posture uses the `danger-full-access` sandbox enum instead.
    */
   readonly profile?: ManagedProfile;
+  /**
+   * Codex's native collaboration mode for this run — `plan` for Claude's plan
+   * mode, undefined otherwise. When set, the run selects Codex's OWN plan posture
+   * (`collaborationMode: {mode:"plan"}` on the turn), where the model is
+   * instructed to investigate and produce a plan and REFUSES to write — verified
+   * to reproduce Claude's plan semantics (a write becomes a refusal, never a
+   * prompt). Only the mode is decided here; the required `settings.model` is
+   * filled at the thread edge from the resolved thread model (`mirror` is pure and
+   * doesn't know Codex's model). See docs/POLICY-COMPILER.md.
+   */
+  readonly collaborationMode?: ModeKind;
 }
 
 /** Dragoman's managed profile bases — the two Codex lets a profile extend. */
@@ -81,17 +93,22 @@ export function profileIdForBase(base: string): string {
  * `danger-full-access` (no OS sandbox).
  *
  * The scope axis is exactly "does this mode auto-allow writes?" — never granting
- * more than Claude's mode would:
+ * more than Claude's mode would. It governs the SHELL channel (what a command may
+ * touch); the EDIT channel (apply_patch) is governed by the approval policy
+ * (`approvalFor`), not by scope — the two must agree for a mode to actually auto-run
+ * writes, which is why the auto-write modes ALSO get `granular` there, not just
+ * `:workspace` here.
  *
- *   - `:workspace` for the **auto-write** modes: `acceptEdits` (edits auto) and
- *     `auto` (everything, classifier-judged). Here workspace writes run without a
- *     prompt, matching Claude, and an escape past the workspace raises a review.
+ *   - `:workspace` for the **auto-write** modes: `acceptEdits` and `auto`. Here
+ *     in-workspace shell writes run without a prompt (and, under their `granular`
+ *     policy, so do in-workspace edits), matching Claude; an escape past the
+ *     workspace raises a review.
  *   - `:read-only` for the **ask / no-auto-write** modes: `default`/`manual` (reads
  *     auto; a write/edit must ESCALATE → the human, mirroring Manual's "ask before
- *     edits"), `plan` (explore, no writes), and `dontAsk` (writes aren't
- *     pre-approved, so they're refused). Giving these `:workspace` would let
- *     in-workspace writes run WITHOUT the prompt Claude requires — mirroring more
- *     permissively than Claude, which we never do.
+ *     edits" — verified), `plan` (explore, no writes — native plan mode enforces it),
+ *     and `dontAsk` (writes aren't pre-approved, so they're refused). Giving these
+ *     `:workspace` would let in-workspace writes run WITHOUT the prompt Claude
+ *     requires — mirroring more permissively than Claude, which we never do.
  *   - `undefined` → `danger-full-access` for `bypassPermissions`: everything, no
  *     sandbox, no review.
  *
@@ -202,8 +219,8 @@ export function mirror(settings: EffectiveSettings, mode: ClaudeMode): CodexPoli
   const approvalPolicy = approvalFor(mode);
   const approvalsReviewer = reviewerFor(mode);
   // execpolicy allow-prefixes come from the user's `allow` Bash rules only. We do
-  // NOT add acceptEdits's fs commands here: in-scope edits/commands already auto-run
-  // via the `:workspace` sandbox, so a fs-command *approval* only ever fires for an
+  // NOT add acceptEdits's fs commands here: under its `granular` policy an in-scope
+  // edit/command already auto-runs, so a fs-command *approval* only ever fires for an
   // ESCAPE (out-of-scope) — auto-accepting that would grant what Claude prompts for.
   const execpolicyAmendments = bashPrefixes(settings.allow);
   const denyPrefixes = bashPrefixes(settings.deny);
@@ -216,25 +233,35 @@ export function mirror(settings: EffectiveSettings, mode: ClaudeMode): CodexPoli
     execpolicyAmendments,
     denyPrefixes,
     profile,
+    collaborationMode: mode === "plan" ? "plan" : undefined,
   };
 }
 
-/** Unmatched command approval: `dontAsk` refuses without asking; others ask the human. */
+/**
+ * Unmatched command approval: `dontAsk` and `plan` refuse without asking; others
+ * ask the human. `plan` runs under Codex's native plan mode (the model refuses
+ * writes at the source), so this is a backstop — a stray escape is declined, never
+ * escalated, mirroring Claude plan where a write becomes a plan, not a prompt.
+ */
 function commandFallbackFor(mode: ClaudeMode): "elicit" | "decline" {
-  return mode === "dontAsk" ? "decline" : "elicit";
+  return mode === "dontAsk" || mode === "plan" ? "decline" : "elicit";
 }
 
 /**
- * File-edit approval. `dontAsk` refuses; everyone else asks the human.
+ * File-edit approval. `dontAsk`/`plan` refuse; everyone else asks the human.
  *
- * acceptEdits is NOT auto-accept: its in-scope edits already auto-run via the
- * `:workspace` sandbox without an approval, so a fileChange approval only ever
- * fires for an ESCAPE (a write outside the writable roots) — which Claude prompts
- * for. Auto-accepting that would grant an out-of-scope write; so acceptEdits, like
- * Manual, routes escaped edits to the human.
+ * acceptEdits is NOT auto-accept HERE, and it doesn't need to be. Verified against
+ * codex-cli 0.150.1: file edits (apply_patch) are gated by the APPROVAL POLICY, not
+ * the sandbox — under `untrusted` every edit prompts even in-workspace, but under
+ * acceptEdits's `granular` policy an in-workspace edit auto-runs with NO approval,
+ * and only an ESCAPE (a write outside the writable roots) raises a fileChange
+ * approval. So the only approval acceptEdits ever sees is an escape — which Claude
+ * prompts for — hence `elicit`, the same as Manual. (Auto-accepting would grant the
+ * out-of-scope write.) `granular` raises escapes DETERMINISTICALLY (4/4 in the
+ * probe); `on-request` was flaky — one escape hard-failed with no prompt.
  */
 function fileChangeFor(mode: ClaudeMode): "elicit" | "accept" | "decline" {
-  if (mode === "dontAsk") return "decline";
+  if (mode === "dontAsk" || mode === "plan") return "decline";
   return "elicit";
 }
 
@@ -276,27 +303,45 @@ const GRANULAR: AskForApproval = {
 };
 
 /**
- * Mode → Codex approval policy.
+ * Mode → Codex approval policy (verified against codex-cli 0.150.1).
  *
- *   - `auto` → `granular`: raises sandbox escapes so the classifier (`auto_review`)
- *     can judge them — Claude's "everything, with background safety checks".
+ * The key correction: file edits (apply_patch) are gated by THIS policy, not by the
+ * sandbox scope. Under `untrusted` every edit prompts — even an in-workspace one
+ * under a `:workspace` profile. Under `granular` an in-workspace edit auto-runs and
+ * only an ESCAPE raises an approval. So the auto-write modes need `granular`, not a
+ * mere `:workspace` scope, to actually auto-run edits.
+ *
+ *   - `auto` and `acceptEdits` → `granular`: in-workspace writes auto-run; escapes
+ *     are raised DETERMINISTICALLY (4/4 in the probe; `on-request` was flaky — one
+ *     escape hard-failed with no prompt). The two differ only in `reviewer` — `auto`
+ *     routes escapes to Codex's model (`auto_review`), acceptEdits to the human.
  *   - `bypassPermissions` → `never`: everything, no checks.
- *   - everything else → `untrusted`: a sandbox escape (or a command the sandbox
- *     can't cover) is raised for review; where it goes is the reviewer + the
- *     `commandFallback`/`fileChange` knobs (human for Manual/acceptEdits/plan,
- *     decline for dontAsk). In-workspace commands still auto-run — that's Claude's
- *     default auto-allow sandbox behaviour, which Codex's `:workspace` matches.
+ *   - `default`/`manual`/`dontAsk` → `untrusted`: reads auto; every edit/write is
+ *     raised for review (human for Manual — "ask before edits", verified; declined
+ *     for dontAsk).
+ *   - `plan` → `on-request`, NOT `untrusted`: plan must READ freely (Claude plan
+ *     explores without prompting), but `untrusted` raises an approval for non-trusted
+ *     reads too, which plan's decline-fallback would then block. `on-request` lets
+ *     reads auto-run and a write hard-fail closed; native plan mode refuses writes at
+ *     the source regardless (verified: read auto-ran, write refused, no prompts).
  */
 function approvalFor(mode: ClaudeMode): AskForApproval {
   switch (mode) {
     case "auto":
+    case "acceptEdits":
       return GRANULAR;
     case "bypassPermissions":
       return "never";
     case "plan":
+      // Reads must run freely (Claude plan explores without prompting). `untrusted`
+      // raises an approval for any non-trusted command — INCLUDING reads — which the
+      // decline-fallback would then block (verified: it blocked a `sed notes.txt`).
+      // `on-request` lets reads auto-run and lets a write hard-fail closed; native
+      // plan mode refuses writes at the source anyway (verified: read auto-ran
+      // cmdReq=0, write refused). So plan reads freely and never writes, no prompts.
+      return "on-request";
     case "default":
     case "manual":
-    case "acceptEdits":
     case "dontAsk":
       return "untrusted";
   }
@@ -307,12 +352,14 @@ function approvalFor(mode: ClaudeMode): AskForApproval {
  *
  *   - `auto` → `auto_review`: Codex's model judges escapes with a risk framework —
  *     the faithful analog of Claude's auto classifier.
- *   - `default`/`manual`/`acceptEdits`/`plan` → `user`: escapes route to the CLIENT
+ *   - `default`/`manual`/`acceptEdits` → `user`: escapes route to the CLIENT
  *     (`item/…/requestApproval`) → our elicitation → the human. NOTE: this must be
  *     set EXPLICITLY — leaving it unset uses the internal agent review (self-
  *     approves), NOT the human, despite the protocol doc's "defaults to user".
  *   - `bypassPermissions` → none (never-ask). `dontAsk` → none: it refuses unmatched
  *     approvals via `commandFallback: "decline"` rather than routing anywhere.
+ *   - `plan` → none: native plan mode makes the model refuse writes, so no escape is
+ *     raised; the decline-fallback backstops any stray one without a human round-trip.
  *
  * Routing to Claude's OWN model isn't an option — Claude Code advertises no MCP
  * sampling (see the recorded finding). And the reviewer only bites under a sandbox
@@ -325,7 +372,6 @@ function reviewerFor(mode: ClaudeMode): ApprovalsReviewer | undefined {
     case "default":
     case "manual":
     case "acceptEdits":
-    case "plan":
       return "user"; // route escapes to the human via the elicitation seam
     default:
       return undefined; // plan / bypassPermissions / dontAsk: no reviewer needed

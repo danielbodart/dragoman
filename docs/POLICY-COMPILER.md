@@ -252,34 +252,51 @@ app-server and reading the notification feed:
 
 <h3 id="implemented-mapping">Implemented mapping</h3>
 
-What `mirror()` emits. In-workspace bash auto-runs (Claude's default **auto-allow**
-sandbox behaviour, which `:workspace` matches); the row governs the **escape /
-fallback** — a command or edit the sandbox can't cover — plus tool-level edits.
-Two per-run knobs carry the fallback to the pump: `commandFallback` (unmatched
-command → `elicit`/`decline`) and `fileChange` (edit → `elicit`/`accept`/`decline`).
+What `mirror()` emits. The row governs the **escape / fallback** — a command or edit
+the sandbox can't cover — carried to the pump by two per-run knobs: `commandFallback`
+(unmatched command → `elicit`/`decline`) and `fileChange` (edit → `elicit`/`accept`/`decline`).
 
-| Claude mode | scope | `approvalPolicy` | reviewer | `commandFallback` | `fileChange` | effect |
-|---|---|---|---|---|---|---|
-| `plan` | `readOnly` | untrusted | user | elicit | elicit | read-only exploration; writes blocked/escalate |
-| `default`/`manual` | `readOnly` | untrusted | user | elicit | elicit | reads auto; **writes/edits escalate → human** (Manual "ask before edits") |
-| `acceptEdits` | `workspaceWrite` | untrusted | user | elicit | elicit | in-scope edits auto (via sandbox); **escaped** edits/commands → human (not auto-accepted) |
-| `auto` | `workspaceWrite` | `granular` | **`auto_review`** | elicit | elicit | escapes → model-judged ✅ **verified** |
-| `dontAsk` | `readOnly` | untrusted | — | **decline** | **decline** | only pre-approved (allow rules) + reads run; writes/unmatched refused, never asks |
-| `bypassPermissions` | `dangerFullAccess` | never | — | — | — | everything, unconfined, no check |
+| Claude mode | scope | `approvalPolicy` | reviewer | native mode | `commandFallback` | `fileChange` | effect |
+|---|---|---|---|---|---|---|---|
+| `plan` | `readOnly` | **`on-request`** | — | **`plan`** | **decline** | **decline** | native plan mode: reads run freely, model **refuses writes at the source**, no prompt ✅ **verified** |
+| `default`/`manual` | `readOnly` | untrusted | user | — | elicit | elicit | reads auto; **edit/write escalates → human, accept writes it** ✅ **verified** |
+| `acceptEdits` | `workspaceWrite` | **`granular`** | user | — | elicit | elicit | in-ws edits **auto-run**; escapes → human ✅ **verified** |
+| `auto` | `workspaceWrite` | `granular` | **`auto_review`** | — | elicit | elicit | escapes → model-judged ✅ **verified** |
+| `dontAsk` | `readOnly` | untrusted | — | — | **decline** | **decline** | only pre-approved (allow rules) + reads run; writes/unmatched refused, never asks |
+| `bypassPermissions` | `dangerFullAccess` | never | — | — | — | — | everything, unconfined, no check |
 
-The scope axis is exactly **"does the mode auto-allow writes?"** — `workspaceWrite`
-only for `acceptEdits`/`auto`; `readOnly` for the ask/blocked/pre-approved modes
-(a write is an escape that escalates or is denied — **never more permissive than
-Claude**, which prompts/blocks writes there); `dangerFullAccess` only for
-`bypassPermissions`.
+**The correction (verified against codex-cli 0.150.1).** Codex gates two channels
+independently, and a mode maps onto *both*, not just the sandbox scope:
 
-`auto` is the **live-verified** row. The others are docs-derived best-effort and
-**not yet live-probed** — in particular whether a `workspaceWrite` sandbox raises
-edit/escape approvals the way this assumes (so Manual really prompts for edits, and
-acceptEdits's auto-accept actually fires) needs the same experiment treatment `auto`
-got. We also don't yet read `autoAllowBashIfSandboxed` (default `true`); a user who
-set the sandbox to *regular* (not auto-allow) would expect in-workspace commands to
-prompt too. See Open.
+- **Shell commands** → the **sandbox scope**. `readOnly`: reads auto, writes escape.
+  `workspaceWrite`: in-ws writes auto, escapes raise. `dangerFullAccess`: all auto.
+- **File edits (apply_patch)** → the **approval policy**, NOT the sandbox. Under
+  `untrusted` *every* edit prompts — even in-workspace under a `workspaceWrite`
+  profile. Under `granular` an in-workspace edit auto-runs and only an escape raises
+  (deterministically — 4/4 in the probe; `on-request` was flaky, one escape
+  hard-failed silently). So the **auto-write modes need `granular`**, not merely a
+  `:workspace` scope, to actually auto-run edits — this is why `acceptEdits` is
+  `granular`, differing from `auto` only in `reviewer` (human vs model).
+- **Plan** is a third axis: a **prompting posture** (`collaborationMode: {mode:"plan"}`),
+  orthogonal to scope and policy. The model is instructed to investigate and refuses
+  to write — reproducing Claude's plan semantics (a write becomes a plan, never a
+  prompt). Its required `settings.model` is filled at the thread edge from the
+  resolved thread model (`mirror` stays pure of Codex-side facts). Plan pairs it with
+  **`on-request`**, not `untrusted`: plan must read freely, but `untrusted` raises an
+  approval for non-trusted reads too, which the decline-fallback would then block
+  (verified — it blocked a `sed`); `on-request` lets reads auto-run and writes
+  hard-fail closed (verified: read auto-ran `cmdReq=0`, write refused).
+
+The scope axis is still **"does the mode auto-allow writes?"** — `workspaceWrite` only
+for `acceptEdits`/`auto`, `readOnly` for the ask/blocked modes, `dangerFullAccess`
+only for `bypassPermissions` — but scope alone is not sufficient for edits; the
+approval policy is the co-conspirator.
+
+All rows except `dontAsk`/`bypassPermissions` are now **live-verified**
+(`test/integration/modes.experiment.ts`, `acceptedits*.experiment.ts`,
+`mapping-verify.experiment.ts`). Still not read: `autoAllowBashIfSandboxed`
+(default `true`) — a user on the *regular* (non-auto-allow) sandbox would expect
+in-workspace commands to prompt too. See Open.
 
 ## Open
 
@@ -309,12 +326,13 @@ config-file equivalent first.)
 
 ### Fidelity / features
 
-- **Live-probe the non-`auto` modes** — `default`/`manual`/`acceptEdits`/`plan`/
-  `dontAsk` are mapped from the docs but not yet verified against real Codex like
-  `auto` was. Key unknown: does a `readOnly`/`workspaceWrite` write-escape actually
-  **escalate to the human** (so Manual can write after a prompt) or hard-fail (so
-  Manual behaves like plan)? And does `dontAsk`'s decline path leave only
-  allow-listed + read-only running once [A] is fixed?
+- **Live-probe the non-`auto` modes** — ✅ DONE for `manual`/`acceptEdits`/`plan`.
+  Verified: a `readOnly` write-escape **does escalate to the human** (Manual writes
+  after accept, `patch rejected by user` on decline — not a hard-fail); `acceptEdits`
+  needs `granular` (not `untrusted`) for in-ws edits to auto-run while escapes still
+  raise; `plan` uses Codex's **native plan mode**, where the model refuses writes with
+  no prompt. Still to probe: `dontAsk`'s decline path leaving only allow-listed +
+  read-only running once [A] is fixed.
 - **`autoAllowBashIfSandboxed`** — not read yet (default `true`). A user on the
   *regular* (non-auto-allow) sandbox expects in-workspace commands to prompt too;
   we'd need to raise those instead of letting the sandbox auto-run them.

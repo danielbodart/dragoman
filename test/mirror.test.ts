@@ -43,15 +43,26 @@ function isGranular(p: unknown): boolean {
 }
 
 describe("mirror — mode → approvalPolicy (the approval axis)", () => {
-  test("auto → granular (raises escapes for the classifier)", () => {
-    expect(isGranular(mirror(settings(), "auto").approvalPolicy)).toBe(true);
-  });
+  // Auto-write modes need `granular`, not just a `:workspace` scope: edits
+  // (apply_patch) are gated by the approval policy, so under `granular` an
+  // in-workspace edit auto-runs and only an escape is raised (verified 0.150.1).
+  for (const mode of ["auto", "acceptEdits"] as const) {
+    test(`${mode} → granular (in-ws writes auto-run, escapes raised)`, () => {
+      expect(isGranular(mirror(settings(), mode).approvalPolicy)).toBe(true);
+    });
+  }
   test("bypassPermissions → never", () => {
     expect(mirror(settings(), "bypassPermissions").approvalPolicy).toBe("never");
   });
-  // Everyone else raises escapes as `untrusted`; where they go is the reviewer +
-  // the commandFallback/fileChange knobs.
-  for (const mode of ["plan", "default", "manual", "acceptEdits", "dontAsk"] as const) {
+  // plan → `on-request`, so reads auto-run (Claude plan explores freely); `untrusted`
+  // would raise non-trusted reads and the decline-fallback would block them. Native
+  // plan mode refuses writes at the source.
+  test("plan → on-request (reads auto-run; writes refused by native plan mode)", () => {
+    expect(mirror(settings(), "plan").approvalPolicy).toBe("on-request");
+  });
+  // The ask/blocked modes raise every write as `untrusted`; where it goes is the
+  // reviewer + the commandFallback/fileChange knobs.
+  for (const mode of ["default", "manual", "dontAsk"] as const) {
     test(`${mode} → untrusted`, () => {
       expect(mirror(settings(), mode).approvalPolicy).toBe("untrusted");
     });
@@ -62,13 +73,14 @@ describe("mirror — mode → approvalsReviewer (human vs model)", () => {
   test("auto → auto_review (Codex's model judges escapes)", () => {
     expect(mirror(settings(), "auto").approvalsReviewer).toBe("auto_review");
   });
-  for (const mode of ["default", "manual", "acceptEdits", "plan"] as const) {
+  for (const mode of ["default", "manual", "acceptEdits"] as const) {
     test(`${mode} → user (escapes routed to the human elicitation)`, () => {
       expect(mirror(settings(), mode).approvalsReviewer).toBe("user");
     });
   }
-  // bypass never asks; dontAsk refuses via commandFallback, not a reviewer.
-  for (const mode of ["dontAsk", "bypassPermissions"] as const) {
+  // bypass never asks; dontAsk refuses via commandFallback, not a reviewer; plan's
+  // native mode refuses writes at the source, so nothing routes to a reviewer.
+  for (const mode of ["plan", "dontAsk", "bypassPermissions"] as const) {
     test(`${mode} → no reviewer`, () => {
       expect(mirror(settings(), mode).approvalsReviewer).toBeUndefined();
     });
@@ -76,21 +88,26 @@ describe("mirror — mode → approvalsReviewer (human vs model)", () => {
 });
 
 describe("mirror — mode → fallback knobs (commandFallback / fileChange)", () => {
-  test("dontAsk refuses unmatched commands and file edits (only pre-approved run)", () => {
-    const p = mirror(settings(), "dontAsk");
-    expect(p.commandFallback).toBe("decline");
-    expect(p.fileChange).toBe("decline");
-  });
-  // acceptEdits does NOT auto-accept escaped edits or inject fs-command allows:
-  // in-scope edits already auto-run via the sandbox, so those paths only ever grant
-  // escapes (which Claude prompts for). It elicits like Manual; the scope differs.
+  // dontAsk refuses unmatched commands/edits (only pre-approved run); plan refuses
+  // too — a backstop under its native plan mode, mirroring "a write becomes a plan,
+  // not a prompt".
+  for (const mode of ["dontAsk", "plan"] as const) {
+    test(`${mode} refuses unmatched commands and file edits (decline, never asks)`, () => {
+      const p = mirror(settings(), mode);
+      expect(p.commandFallback).toBe("decline");
+      expect(p.fileChange).toBe("decline");
+    });
+  }
+  // acceptEdits does NOT auto-accept escaped edits or inject fs-command allows: under
+  // its `granular` policy in-scope edits already auto-run, so these paths only ever
+  // see escapes (which Claude prompts for). It elicits like Manual; the policy differs.
   test("acceptEdits does not auto-accept escapes (elicit) and adds no fs-command allows", () => {
     const p = mirror(settings(), "acceptEdits");
     expect(p.fileChange).toBe("elicit");
     expect(p.commandFallback).toBe("elicit");
     expect(p.execpolicyAmendments).toEqual([]); // no ambient fs prefixes; only user allow rules
   });
-  for (const mode of ["default", "manual", "plan", "auto", "acceptEdits"] as const) {
+  for (const mode of ["default", "manual", "auto", "acceptEdits"] as const) {
     test(`${mode} → elicit command fallback, elicit file edits`, () => {
       const p = mirror(settings(), mode);
       expect(p.commandFallback).toBe("elicit");
@@ -122,6 +139,20 @@ describe("mirror — mode → scope (workspaceWrite only for the auto-write mode
     expect(mirror(settings(), "bypassPermissions").profile).toBeUndefined();
     expect(mirror(settings({ sandboxEnabled: true }), "bypassPermissions").profile).toBeUndefined();
   });
+});
+
+describe("mirror — mode → collaborationMode (Codex's native plan posture)", () => {
+  // plan selects Codex's own plan mode (the model refuses writes at the source —
+  // verified to reproduce Claude plan). The required settings.model is filled at the
+  // thread edge from the resolved thread, so mirror only decides the mode here.
+  test("plan → collaborationMode 'plan'", () => {
+    expect(mirror(settings(), "plan").collaborationMode).toBe("plan");
+  });
+  for (const mode of ["default", "manual", "acceptEdits", "auto", "dontAsk", "bypassPermissions"] as const) {
+    test(`${mode} → no collaborationMode`, () => {
+      expect(mirror(settings(), mode).collaborationMode).toBeUndefined();
+    });
+  }
 });
 
 describe("mirror — network posture → profile.network.enabled", () => {

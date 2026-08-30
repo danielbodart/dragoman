@@ -18,7 +18,7 @@ const emptySettings = (): EffectiveSettings => ({
 function bridge(threadId = "t1", settings: () => EffectiveSettings = emptySettings) {
   const conn = new FakeAppServer();
   const elicitation = new FakeElicitationChannel();
-  conn.results["thread/start"] = [{ thread: { id: threadId } }];
+  conn.results["thread/start"] = [{ thread: { id: threadId }, model: "test-model", reasoningEffort: null }];
   conn.results["turn/start"] = [{ turn: { id: "turn1" } }];
   // Match production wiring: ThreadRuns provisions per run via the thunk and the
   // pump is attached on connect. The same fake is returned for the run.
@@ -110,8 +110,22 @@ describe("codex_run / codex_status", () => {
     const { conn, runs } = bridge();
     await runs.start("plan it", "/repo", "plan");
     const start = conn.requests.find((r) => r.method === "thread/start");
-    // plan → untrusted (ask before acting) + read-only profile.
-    expect(start?.params).toMatchObject({ cwd: "/repo", approvalPolicy: "untrusted", permissions: "dragoman-read-only" });
+    // plan → on-request (reads run freely; writes hard-fail) + read-only profile. The
+    // native plan mode (collaborationMode) rides turn/start, not thread/start.
+    expect(start?.params).toMatchObject({ cwd: "/repo", approvalPolicy: "on-request", permissions: "dragoman-read-only" });
+    // The native plan posture rides the turn, with settings.model filled from the
+    // resolved thread/start response ("test-model").
+    const turn = conn.requests.find((r) => r.method === "turn/start");
+    expect(turn?.params).toMatchObject({
+      collaborationMode: { mode: "plan", settings: { model: "test-model", reasoning_effort: null, developer_instructions: null } },
+    });
+  });
+
+  test("non-plan postures send no collaborationMode", async () => {
+    const { conn, runs } = bridge();
+    await runs.start("go", "/repo", "acceptEdits");
+    const turn = conn.requests.find((r) => r.method === "turn/start");
+    expect((turn?.params as { collaborationMode?: unknown }).collaborationMode).toBeUndefined();
   });
 
   test("runtimeWorkspaceRoots carries cwd + additionalDirectories", async () => {
