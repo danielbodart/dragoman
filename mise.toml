@@ -55,6 +55,8 @@ depends = ["check", "test", "package"]
 # or `mise run package` first). Invoked only from Actions on push-to-main; needs
 # GITHUB_TOKEN in the environment for both `gh` and the marketplace push.
 [tasks.release]
+# bash, not mise's default sh - `set -o pipefail` (below) is a bashism.
+shell = "bash -c"
 run = '''
 set -euo pipefail
 v="$(bun scripts/version.ts)"
