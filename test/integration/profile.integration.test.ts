@@ -13,7 +13,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { AppServerProcess } from "../../src/codex.ts";
 import { ensureCodexHome } from "../../src/codex-home.ts";
-import { allProfiles } from "../../src/mirror.ts";
 import { startPump } from "../../src/pump.ts";
 import { ThreadRuns } from "../../src/thread-run.ts";
 import type { EffectiveSettings } from "../../src/settings.ts";
@@ -33,7 +32,8 @@ describe("profile route enforces per-host network through ThreadRuns", () => {
         const layout = { realHome: join(homedir(), ".codex"), isolatedHome: join(homeParent, "codex-home") };
 
         const runs: ThreadRuns = new ThreadRuns(
-          async () => ({ conn: await AppServerProcess.start(["codex", "app-server"], { CODEX_HOME: ensureCodexHome(allProfiles(effective()), layout) }) }),
+          // Live path: write only the ONE profile mirror() compiled for this run.
+          async (policy) => ({ conn: await AppServerProcess.start(["codex", "app-server"], { CODEX_HOME: ensureCodexHome(policy.profile ? [policy.profile] : [], layout) }) }),
           (conn) => startPump(conn, runs, new ScriptedElicitation()),
           Date.now,
           effective,

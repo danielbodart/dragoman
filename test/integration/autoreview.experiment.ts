@@ -17,7 +17,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { AppServerProcess, type ServerRequest } from "../../src/codex.ts";
 import { ensureCodexHome } from "../../src/codex-home.ts";
-import { allProfiles } from "../../src/mirror.ts";
+import { profileFor } from "../../src/mirror.ts";
 import { settings } from "./harness.ts";
 import type { AskForApproval } from "../../generated/codex-protocol/ts/v2/AskForApproval.ts";
 import type { ApprovalsReviewer } from "../../generated/codex-protocol/ts/v2/ApprovalsReviewer.ts";
@@ -41,7 +41,8 @@ async function runOnce(cell: Cell, n: number): Promise<void> {
   rmSync(TARGET, { force: true });
   const homeParent = mkdtempSync(join(homedir(), ".dragoman-exp-"));
   const cwd = mkdtempSync(join(homedir(), ".dragoman-cwd-"));
-  const home = ensureCodexHome(allProfiles(settings({ sandboxEnabled: true })), {
+  // The workspace profile the sandbox-on cells select — the one production compiles.
+  const home = ensureCodexHome([profileFor(settings({ sandboxEnabled: true }), "acceptEdits")!], {
     realHome: join(homedir(), ".codex"),
     isolatedHome: join(homeParent, "codex-home"),
   });

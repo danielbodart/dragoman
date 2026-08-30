@@ -17,14 +17,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { AppServerProcess } from "../../src/codex.ts";
 import { ensureCodexHome } from "../../src/codex-home.ts";
-import { allProfiles } from "../../src/mirror.ts";
 import { startPump } from "../../src/pump.ts";
 import { ThreadRuns } from "../../src/thread-run.ts";
 import type { EffectiveSettings } from "../../src/settings.ts";
 import { verifyOnce } from "./ratchet.ts";
 import { execProfiled, ScriptedElicitation, settings, settle, withProfiledCodex, withTempDir } from "./harness.ts";
-
-const WORKSPACE = "dragoman-workspace";
 
 describe("filesystem axis is honoured (profile → command/exec)", () => {
   verifyOnce("denyRead → a file is unreadable, while a sibling read and a cwd write still work", async () => {
@@ -34,13 +31,14 @@ describe("filesystem axis is honoured (profile → command/exec)", () => {
       writeFileSync(secret, "TOPSECRET\n");
       writeFileSync(publicFile, "hello\n");
       const effective = settings({ denyRead: [secret] });
-      await withProfiledCodex(effective, async (conn) => {
+      // `acceptEdits` → the workspace profile production would compile for this run.
+      await withProfiledCodex(effective, "acceptEdits", async (conn, profile) => {
         // denyRead → "deny": the read is refused.
-        expect((await execProfiled(conn, ["cat", secret], cwd, WORKSPACE)).exitCode).not.toBe(0);
+        expect((await execProfiled(conn, ["cat", secret], cwd, profile)).exitCode).not.toBe(0);
         // The table AUGMENTS the base: a sibling stays readable…
-        expect((await execProfiled(conn, ["cat", publicFile], cwd, WORKSPACE)).exitCode).toBe(0);
+        expect((await execProfiled(conn, ["cat", publicFile], cwd, profile)).exitCode).toBe(0);
         // …and the base's cwd write is NOT clobbered by adding a filesystem table.
-        expect((await execProfiled(conn, ["touch", join(cwd, "in.txt")], cwd, WORKSPACE)).exitCode).toBe(0);
+        expect((await execProfiled(conn, ["touch", join(cwd, "in.txt")], cwd, profile)).exitCode).toBe(0);
       });
     });
   });
@@ -58,7 +56,8 @@ describe("filesystem write-carve is honoured (profile + runtimeWorkspaceRoots �
         const layout = { realHome: join(homedir(), ".codex"), isolatedHome: join(homeParent, "codex-home") };
 
         const runs: ThreadRuns = new ThreadRuns(
-          async () => ({ conn: await AppServerProcess.start(["codex", "app-server"], { CODEX_HOME: ensureCodexHome(allProfiles(effective()), layout) }) }),
+          // Live path: write only the ONE profile mirror() compiled for this run.
+          async (policy) => ({ conn: await AppServerProcess.start(["codex", "app-server"], { CODEX_HOME: ensureCodexHome(policy.profile ? [policy.profile] : [], layout) }) }),
           (conn) => startPump(conn, runs, new ScriptedElicitation()),
           Date.now,
           effective,

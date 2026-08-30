@@ -17,7 +17,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { AppServerProcess, type ServerRequest } from "../../src/codex.ts";
 import { ensureCodexHome } from "../../src/codex-home.ts";
-import { allProfiles, mirror, type ClaudeMode } from "../../src/mirror.ts";
+import { mirror, type ClaudeMode } from "../../src/mirror.ts";
 import { settings } from "./harness.ts";
 import type { ThreadStartResponse } from "../../generated/codex-protocol/ts/v2/ThreadStartResponse.ts";
 
@@ -43,9 +43,10 @@ async function runOnce(cell: Cell): Promise<void> {
   const target = cell.where === "in" ? join(cwd, "probe.txt") : join(homedir(), "dragoman-escape-probe.txt");
   rmSync(target, { force: true });
 
-  // The REAL compiled policy for this mode.
+  // The REAL compiled policy for this mode — and provision the ONE profile it carries,
+  // exactly as production does (no pre-baked pair).
   const policy = mirror(settings({ sandboxEnabled: true }), cell.mode);
-  const home = ensureCodexHome(allProfiles(settings({ sandboxEnabled: true })), {
+  const home = ensureCodexHome(policy.profile ? [policy.profile] : [], {
     realHome: join(homedir(), ".codex"),
     isolatedHome: join(homeParent, "codex-home"),
   });

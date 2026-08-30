@@ -80,9 +80,6 @@ export interface CodexPolicy {
   readonly collaborationMode?: ModeKind;
 }
 
-/** Dragoman's managed profile bases — the two Codex lets a profile extend. */
-export const PROFILE_BASES = [":read-only", ":workspace"] as const;
-
 /** The profile id for a base scope, e.g. `:workspace` → `dragoman-workspace`. */
 export function profileIdForBase(base: string): string {
   return `dragoman-${base.slice(1)}`;
@@ -184,22 +181,18 @@ export function filesystemFor(settings: EffectiveSettings): ProfileFilesystem {
   return { paths, workspaceRoots };
 }
 
-/** The profile a thread selects, or undefined for danger-full-access (no profile). */
+/**
+ * The ONE profile a thread selects — the whole scope + network + filesystem axis
+ * for this run — or undefined for danger-full-access (no profile). This is what the
+ * live path writes: `mirror` compiles exactly this from the composite settings + the
+ * run's mode, and provision emits it into the per-run config. There is no pre-baked
+ * pair — the old `allProfiles` (both scopes, emitted once) is gone; anything wanting
+ * both scopes (test exec-probes) builds them explicitly from this function.
+ */
 export function profileFor(settings: EffectiveSettings, mode: ClaudeMode): ManagedProfile | undefined {
   const base = baseFor(settings, mode);
   if (base === undefined) return undefined; // danger-full-access: not a profile base
   return { id: profileIdForBase(base), base, network: networkFor(settings), filesystem: filesystemFor(settings) };
-}
-
-/**
- * All profiles Dragoman writes into the isolated config — one per base scope,
- * sharing the same network rules — so any posture's thread can select its scope
- * from a config generated once when codex is spawned.
- */
-export function allProfiles(settings: EffectiveSettings): ManagedProfile[] {
-  const network = networkFor(settings);
-  const filesystem = filesystemFor(settings);
-  return PROFILE_BASES.map((base) => ({ id: profileIdForBase(base), base, network, filesystem }));
 }
 
 /** The safe default when no mode is known (PLAN §10.2 tier 3): `default` — Manual

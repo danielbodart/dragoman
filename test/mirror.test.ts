@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { allProfiles, filesystemFor, mirror, profileFor, resolveMode } from "../src/mirror.ts";
+import { filesystemFor, mirror, profileFor, resolveMode } from "../src/mirror.ts";
 import type { EffectiveSettings } from "../src/settings.ts";
 
 /** Effective settings with sensible empty defaults, overridable field by field. */
@@ -222,11 +222,9 @@ describe("mirror — profiles (the unified scope + network axis)", () => {
     expect(profileFor(settings(), "bypassPermissions")).toBeUndefined();
   });
 
-  test("allProfiles yields one profile per extendable base, sharing the network rules", () => {
-    const ps = allProfiles(settings({ sandboxEnabled: true, allowedDomains: ["a.com"] }));
-    expect(ps.map((p) => p.base)).toEqual([":read-only", ":workspace"]);
-    expect(new Set(ps.map((p) => JSON.stringify(p.network))).size).toBe(1); // same network everywhere
-    expect(ps[1]!.network!.domains).toEqual([["a.com", "allow"]]);
+  test("profileFor derives the network domain list from the composite settings", () => {
+    const p = profileFor(settings({ sandboxEnabled: true, allowedDomains: ["a.com"] }), "acceptEdits");
+    expect(p!.network!.domains).toEqual([["a.com", "allow"]]);
   });
 });
 
@@ -270,11 +268,9 @@ describe("filesystemFor — the four lists → filesystem access", () => {
     expect(fs.workspaceRoots).toEqual([]);
   });
 
-  test("profileFor carries the filesystem axis; allProfiles shares it across bases", () => {
+  test("profileFor carries the filesystem axis", () => {
     const p = profileFor(settings({ sandboxEnabled: true, denyRead: ["/s"] }), "default");
     expect(p!.filesystem!.paths).toEqual([["/s", "deny"]]);
-    const ps = allProfiles(settings({ denyRead: ["/s"] }));
-    expect(new Set(ps.map((x) => JSON.stringify(x.filesystem))).size).toBe(1);
   });
 });
 

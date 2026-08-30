@@ -21,7 +21,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { AppServerProcess, type AppServerConn } from "../../src/codex.ts";
 import { ensureCodexHome } from "../../src/codex-home.ts";
-import { allProfiles } from "../../src/mirror.ts";
+import { profileFor, type ClaudeMode } from "../../src/mirror.ts";
 import { startPump } from "../../src/pump.ts";
 import { ThreadRuns } from "../../src/thread-run.ts";
 import type { Approval, ElicitationChannel } from "../../src/elicitation.ts";
@@ -51,15 +51,23 @@ export async function exec(
 }
 
 /**
- * Spawn codex against an isolated home carrying the profiles mirrored from
- * `effective`, run `fn`, and clean up — the production path, model-free.
+ * Spawn codex against an isolated home carrying the ONE profile `mirror()` compiles
+ * for `mode` from `effective` — the exact production provisioning (`profileFor` →
+ * `ensureCodexHome([profile])`) — run `fn` with its profile id, and clean up. No
+ * pre-baked pair: a scope probe provisions the scope it tests, like a real run does.
+ * Model-free (`command/exec`), so deterministic and free.
  */
-export async function withProfiledCodex<T>(effective: EffectiveSettings, fn: (conn: AppServerConn) => Promise<T>): Promise<T> {
+export async function withProfiledCodex<T>(
+  effective: EffectiveSettings,
+  mode: ClaudeMode,
+  fn: (conn: AppServerConn, profile: string) => Promise<T>,
+): Promise<T> {
   return withTempDir(async (homeParent) => {
-    const home = ensureCodexHome(allProfiles(effective), { realHome: join(homedir(), ".codex"), isolatedHome: join(homeParent, "codex-home") });
+    const profile = profileFor(effective, mode); // the single profile production would write
+    const home = ensureCodexHome(profile ? [profile] : [], { realHome: join(homedir(), ".codex"), isolatedHome: join(homeParent, "codex-home") });
     const conn = await AppServerProcess.start(["codex", "app-server"], { CODEX_HOME: home });
     try {
-      return await fn(conn);
+      return await fn(conn, profile!.id);
     } finally {
       conn.close();
     }
@@ -67,15 +75,20 @@ export async function withProfiledCodex<T>(effective: EffectiveSettings, fn: (co
 }
 
 /**
- * A `ThreadRuns` wired the production way: its connect thunk builds an isolated
- * CODEX_HOME carrying `effective`'s mirrored profiles and spawns codex against it,
- * with the pump on a scripted elicitation. `homeParent` is a throwaway dir (from
- * `withTempDir`) for the isolated home.
+ * A `ThreadRuns` wired EXACTLY the production way (mirrors `main.ts`): its provision
+ * thunk writes only the ONE profile `mirror()` compiled for this run
+ * (`policy.profile`, or none → danger-full-access) into a fresh isolated CODEX_HOME,
+ * then spawns codex — so these tests exercise the live single-profile emission, not a
+ * pre-baked pair. `homeParent` is a throwaway dir (from `withTempDir`).
  */
 export function profiledRuns(effective: EffectiveSettings, elicitation: ScriptedElicitation, homeParent: string): ThreadRuns {
   const layout = { realHome: join(homedir(), ".codex"), isolatedHome: join(homeParent, "codex-home") };
   const runs: ThreadRuns = new ThreadRuns(
-    async () => ({ conn: await AppServerProcess.start(["codex", "app-server"], { CODEX_HOME: ensureCodexHome(allProfiles(effective), layout) }) }),
+    async (policy) => ({
+      conn: await AppServerProcess.start(["codex", "app-server"], {
+        CODEX_HOME: ensureCodexHome(policy.profile ? [policy.profile] : [], layout),
+      }),
+    }),
     (conn) => startPump(conn, runs, elicitation),
     Date.now,
     () => effective,
