@@ -35,7 +35,7 @@ describe("resolveMode (the three-tier posture)", () => {
   });
 });
 
-// The verified mapping (docs/POLICY-COMPILER.md): MODE drives approval (policy +
+// The verified mapping (docs/MAPPING.md): MODE drives approval (policy +
 // reviewer); judged modes force a :workspace sandbox as the review TRIGGER even when
 // Claude isn't sandboxing; the sandbox config refines the workspace tables.
 function isGranular(p: unknown): boolean {

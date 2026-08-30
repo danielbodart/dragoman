@@ -3,7 +3,7 @@
  * (from Claude's allow/deny Bash rules) actually bind on the PRODUCTION path — for
  * every command, independent of the approval round-trip?
  *
- * Verified against codex-cli 0.150.1 (see docs/POLICY-COMPILER.md):
+ * Verified against codex-cli 0.150.1 (see docs/MAPPING.md):
  *  - a `deny` rule → `forbidden`: the command is blocked even in `bypassPermissions`
  *    (approvalPolicy `never` + dangerFullAccess), which round-trips NO approval — the
  *    gap the per-approval gate can't reach (finding [B]).

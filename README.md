@@ -1,4 +1,4 @@
-<p align="center"><img src="docs/logo.png" alt="Logo" width="600"></p>
+<p align="center"><img src="logo.png" alt="Logo" width="600"></p>
 
 # Dragoman
 
@@ -39,31 +39,47 @@ does, it uses Claude's native approval prompt.
 
 ## Status
 
-**WIP.** There are holes/bugs in the mappings for sure. Auto mode is probably the safest.
-The mappings below are implemented but not perfect— unit-tested and
-locked by live integration tests against real Codex. It installs as a native Claude
-Code **plugin** — a `/dragoman:codex` skill and a `dragoman:codex-agent` subagent
-so Claude reaches for it naturally. Still to come: the fine-grained filesystem rules
-and model-answered approvals. See [`docs/PLAN.md`](docs/PLAN.md).
+**WIP, but the mirror is feature-complete.** The mappings below are implemented,
+unit-tested, and locked by live integration tests against real Codex. It installs as
+a native Claude Code **plugin** — a `/dragoman:codex` skill and a
+`dragoman:codex-agent` subagent so Claude reaches for it naturally. One Claude
+setting can't map faithfully — it's called out in
+[`docs/MAPPING.md`](docs/MAPPING.md), alongside the full mapping; the design and
+ethos are in [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## What's mapped
 
-| Claude Code | → Codex | Status |
+Each Claude permission **mode** becomes a Codex posture:
+
+| Claude mode | Codex behaviour |
+|---|---|
+| `plan` | Native Codex plan mode — reads run, writes refused at the source, no prompts |
+| `default` / `manual` | Reads auto-run; every edit or write escalates to a native approval |
+| `acceptEdits` | In-workspace edits auto-run; anything escaping the workspace escalates |
+| `auto` | Escapes are judged by Codex's own safety classifier |
+| `dontAsk` | Only pre-approved commands and reads run; everything else refused, never asked |
+| `bypassPermissions` | Everything runs, unconfined — no sandbox, no prompts |
+
+And each relevant **setting** is mirrored onto the Codex run:
+
+| Claude Code | → Codex | |
 |---|---|---|
-| Permission mode (`plan` / `default` / `auto` / `bypass`…) | approval policy + profile scope | ✅ |
+| Permission mode | approval policy + reviewer + sandbox scope (above) | ✅ |
 | Sandbox scope (read-only / workspace-write / danger) | permission-profile base | ✅ |
 | `permissions.additionalDirectories` | `runtimeWorkspaceRoots` (writable roots) | ✅ |
+| `sandbox.filesystem.allow`/`denyRead`/`denyWrite`/`allowWrite` | profile `filesystem` path→access table | ✅ |
 | Network on/off (mirrors Claude's real posture) | profile `network.enabled` | ✅ |
 | `sandbox.network.allowedDomains` / `deniedDomains` / `WebFetch(domain:)` | per-host allow/deny via Codex's network proxy | ✅ |
-| `permissions.allow` Bash rules | auto-accept (execpolicy amendment) | ✅ |
-| `permissions.deny` Bash rules | pre-decline (fail-closed) | ✅ |
+| `permissions.allow` Bash rules | auto-accept (execpolicy) | ✅ |
+| `permissions.deny` Bash rules | pre-decline (execpolicy, fail-closed) | ✅ |
 | Approvals for anything uncovered | **async native elicitation** | ✅ |
 | Codex progress | **sparse heartbeat**, surfaced on poll | ✅ |
-| `sandbox.filesystem.allowRead` / `denyRead` / `denyWrite` | profile `file_system` entries | ⏳ planned |
 
 Mirroring runs against an **isolated `CODEX_HOME`** (auth inherited from `~/.codex`,
 config = your config + a managed profile block), so it never touches your real
-Codex config.
+Codex config. Full per-setting detail — with the one mapping that can't be faithful
+— is in [`docs/MAPPING.md`](docs/MAPPING.md); the design and ethos in
+[`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## Install
 

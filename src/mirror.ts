@@ -39,10 +39,11 @@ export interface CodexPolicy {
   readonly approvalPolicy: AskForApproval;
   /**
    * Who adjudicates approval escalations. Orthogonal to `approvalPolicy` (which
-   * says *when* to ask). `auto` mode routes to Codex's model reviewer
-   * (`auto_review`) — the closest analog to Claude's auto classifier, since
-   * routing to Claude's own model is not available (no MCP sampling). Undefined
-   * → Codex's default (`user`), i.e. the human elicitation seam.
+   * says *when* to ask). `auto` mode leans into Codex's own model reviewer
+   * (`auto_review`) — the analog to Claude's auto classifier. To reach the human,
+   * Dragoman sets `user` explicitly: leaving it undefined does NOT default to
+   * `user` headless — the probe showed it self-approves via internal agent review
+   * — so undefined is reserved for postures with no reviewer (plan/bypass/dontAsk).
    */
   readonly approvalsReviewer?: ApprovalsReviewer;
   /**
@@ -75,7 +76,7 @@ export interface CodexPolicy {
    * to reproduce Claude's plan semantics (a write becomes a refusal, never a
    * prompt). Only the mode is decided here; the required `settings.model` is
    * filled at the thread edge from the resolved thread model (`mirror` is pure and
-   * doesn't know Codex's model). See docs/POLICY-COMPILER.md.
+   * doesn't know Codex's model). See docs/MAPPING.md.
    */
   readonly collaborationMode?: ModeKind;
 }
@@ -111,7 +112,7 @@ export function profileIdForBase(base: string): string {
  *
  * `readOnly` still triggers a review — a write is an escape past it — so the
  * reviewer/fallback (human / decline) handles it. The `filesystem`/`network`
- * tables refine the profile when Claude is sandboxing. See docs/POLICY-COMPILER.md.
+ * tables refine the profile when Claude is sandboxing. See docs/MAPPING.md.
  */
 function baseFor(_settings: EffectiveSettings, mode: ClaudeMode): string | undefined {
   if (mode === "bypassPermissions") return undefined; // danger-full-access: no sandbox
@@ -151,8 +152,8 @@ function webFetchDomain(rule: string): string | undefined {
 /**
  * Claude's four filesystem lists → the profile's `filesystem` axis.
  *
- * Each Claude list maps to one Codex access level by what it MEANS (PLAN §10.4,
- * [`FILESYSTEM-MAPPING.md`](../docs/FILESYSTEM-MAPPING.md)):
+ * Each Claude list maps to one Codex access level by what it MEANS
+ * (see [`MAPPING.md` → Filesystem](../docs/MAPPING.md)):
  *
  *   denyRead → deny   (no read, no write)
  *   denyWrite → read  (read-only — Claude's "no write, still readable", NOT deny)

@@ -50,7 +50,7 @@ export class ThreadRuns {
   /**
    * `provision` spawns a FRESH app-server per run from the compiled policy — so
    * every run's Codex config is generated from the settings read at that moment
-   * (docs/POLICY-COMPILER.md: per-run spawn; caching is a later decorator). Codex
+   * (docs/DESIGN.md: per-run spawn; caching is a later decorator). Codex
    * is not touched until the first `start()`, keeping the MCP server responsive to
    * `initialize`/`tools/list` and letting a broken codex fail only a `codex_run`
    * call. `onConn` wires the pump onto each new connection.

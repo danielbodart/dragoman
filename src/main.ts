@@ -87,7 +87,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   // Everything below stdout is the MCP channel to Claude Code — diagnostics go
   // to stderr so they never corrupt the protocol on stdout.
   //
-  // PER-RUN SPAWN (docs/POLICY-COMPILER.md): every codex_run provisions its OWN
+  // PER-RUN SPAWN (docs/DESIGN.md): every codex_run provisions its OWN
   // codex app-server, whose config is compiled from the settings read at that
   // moment, against a UNIQUE isolated CODEX_HOME (so concurrent runs never clobber
   // one config.toml). Codex is untouched until the first run, keeping the MCP
