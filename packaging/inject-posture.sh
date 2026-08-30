@@ -16,20 +16,17 @@ INPUT=$(cat)
 MODE=$(printf '%s' "$INPUT" | jq -r '.permission_mode // empty')
 EXISTING=$(printf '%s' "$INPUT" | jq -r '.tool_input.posture // empty')
 
-# A small breadcrumb so the live-vs-static behaviour can be verified. Best-effort:
-# never let a log-write failure emit noise or affect the hook.
-LOG="${CLAUDE_PLUGIN_ROOT:-/tmp}/.posture-hook.log"
-{ printf '[%s] permission_mode=%s existing_posture=%s\n' "$(date -Iseconds)" "${MODE:-<none>}" "${EXISTING:-<none>}" >> "$LOG"; } 2>/dev/null || true
-
 # Nothing to inject: explicit override present, or no mode reported.
 if [ -n "$EXISTING" ] || [ -z "$MODE" ]; then
   exit 0
 fi
 
-# Merge `posture` into the tool input; other input fields are untouched.
-jq -n --arg mode "$MODE" '{
+# Add `posture` and echo back the WHOLE tool input: `updatedInput` REPLACES the input
+# (verified — it does not merge, despite the docs), so returning only `{posture}` would
+# drop `prompt`/`cwd`.
+printf '%s' "$INPUT" | jq -c --arg mode "$MODE" '{
   hookSpecificOutput: {
     hookEventName: "PreToolUse",
-    updatedInput: { posture: $mode }
+    updatedInput: (.tool_input + { posture: $mode })
   }
 }'
