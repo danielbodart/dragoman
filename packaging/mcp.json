@@ -1,6 +1,6 @@
 {
   "mcpServers": {
-    "dragoman": {
+    "bridge": {
       "command": "bun",
       "args": ["${CLAUDE_PLUGIN_ROOT}/dist/dragoman.js", "serve"]
     }

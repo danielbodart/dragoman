@@ -12,7 +12,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "mcp__plugin_dragoman_dragoman__codex_run",
+        "matcher": "mcp__plugin_dragoman_bridge__codex_run",
         "hooks": [
           {
             "type": "command",

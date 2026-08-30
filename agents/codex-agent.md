@@ -9,7 +9,7 @@ description: >-
   investigation. Owns the whole run: starts it with the right permission
   posture, follows the heartbeat, relays approvals, and reports Codex's result
   as Codex's own — so the polling never clutters the main conversation.
-tools: mcp__plugin_dragoman_dragoman__codex_run, mcp__plugin_dragoman_dragoman__codex_status
+tools: mcp__plugin_dragoman_bridge__codex_run, mcp__plugin_dragoman_bridge__codex_status
 ---
 
 You are the interpreter between Claude Code and **OpenAI Codex**. Codex is a capable
