@@ -95,7 +95,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   // only a codex_run call. This is the provision seam — the only place that
   // touches the filesystem or spawns a process.
   const controller = new AbortController();
-  const { realHome } = codexHomeLayout();
+  const { realHome, sharedStore } = codexHomeLayout();
   const runsRoot = join(homedir(), ".dragoman", "runs");
 
   const runs = new ThreadRuns(
@@ -110,7 +110,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       const rules = renderRules(policy.execpolicyAmendments, policy.denyPrefixes);
       const home = ensureCodexHome(
         policy.profile ? [policy.profile] : [],
-        { realHome, isolatedHome: join(runDir, "codex-home") },
+        { realHome, isolatedHome: join(runDir, "codex-home"), sharedStore },
         rules,
       );
       const conn = await AppServerProcess.start(parsed.codexCommand, { CODEX_HOME: home });

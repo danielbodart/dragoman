@@ -83,17 +83,24 @@ export async function withProfiledCodex<T>(
  * pre-baked pair. `homeParent` is a throwaway dir (from `withTempDir`).
  */
 export function profiledRuns(effective: EffectiveSettings, elicitation: ScriptedElicitation, homeParent: string): ThreadRuns {
-  const layout = { realHome: join(homedir(), ".codex"), isolatedHome: join(homeParent, "codex-home") };
+  // Mirror main.ts EXACTLY: a UNIQUE per-run home (deleted on dispose) + one shared
+  // store for durable state. Sharing the store is what lets codex_continue resume a
+  // thread after its run's home is gone — and using a unique home (not one shared home)
+  // is what makes that a faithful test rather than a false green.
+  const realHome = join(homedir(), ".codex");
+  const sharedStore = join(homeParent, "shared");
+  const runsRoot = join(homeParent, "runs");
   const runs: ThreadRuns = new ThreadRuns(
-    async (policy) => ({
-      conn: await AppServerProcess.start(["codex", "app-server"], {
-        CODEX_HOME: ensureCodexHome(
-          policy.profile ? [policy.profile] : [],
-          layout,
-          renderRules(policy.execpolicyAmendments, policy.denyPrefixes),
-        ),
-      }),
-    }),
+    async (policy) => {
+      const runDir = join(runsRoot, crypto.randomUUID());
+      const home = ensureCodexHome(
+        policy.profile ? [policy.profile] : [],
+        { realHome, isolatedHome: join(runDir, "codex-home"), sharedStore },
+        renderRules(policy.execpolicyAmendments, policy.denyPrefixes),
+      );
+      const conn = await AppServerProcess.start(["codex", "app-server"], { CODEX_HOME: home });
+      return { conn, cleanup: () => { conn.close(); rmSync(runDir, { recursive: true, force: true }); } };
+    },
     (conn) => startPump(conn, runs, elicitation),
     Date.now,
     () => effective,

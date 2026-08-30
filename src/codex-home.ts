@@ -12,24 +12,51 @@
  * isolated config, zero leak.
  *
  * IO lives here; the block rendering it composes is the pure `codex-config`.
+ *
+ * ## Isolated config, SHARED state
+ *
+ * The per-run home isolates only what MUST be per-run: `config.toml` (the managed
+ * profile + the global `network_proxy` flag) and `rules/` (Claude's live allow/deny
+ * as execpolicy — auto-discovered globally per home, so it can't be shared). Both are
+ * filesystem-level and differ per run, which is why the home is per-run at all.
+ *
+ * Everything ELSE has no reason to be isolated and every reason to persist: a thread's
+ * rollout lives in `sessions/` + `session_index.jsonl`, and if that dies with the
+ * run's home, `thread/resume` (codex_continue) can't find it — verified: a fresh home
+ * gives `-32600: no rollout found`. So the durable, concurrency-safe state is symlinked
+ * into each home from ONE shared store (`~/.dragoman/shared`), the same move `auth.json`
+ * already makes to the real home. The volatile sqlite state and lock dirs are
+ * deliberately NOT shared — concurrent per-run processes writing shared sqlite would
+ * risk corruption, and resume rebuilds from the rollout without them.
  */
 import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { renderManagedBlock, spliceManagedBlock, withDefaultPermissions, type ManagedProfile } from "./codex-config.ts";
 
+/** Directories codex writes state INTO — symlinked as a whole so writes land in the
+ * shared store. `sessions` is correctness (the rollout); `cache` is perf. */
+const SHARED_DIRS = ["sessions", "cache"] as const;
+/** Root files codex maintains — symlinked (dangling until first write is fine).
+ * `session_index.jsonl` is correctness (thread id → rollout); `models_cache.json` perf. */
+const SHARED_FILES = ["session_index.jsonl", "models_cache.json"] as const;
+
 export interface CodexHomeLayout {
   /** The real codex home to inherit auth + config from (default `$CODEX_HOME` ?? `~/.codex`). */
   readonly realHome: string;
   /** Dragoman's isolated home (default `$DRAGOMAN_HOME` ?? `~/.dragoman` `/codex-home`). */
   readonly isolatedHome: string;
+  /** Persistent store for durable state (`sessions/`, index, caches) symlinked into every
+   * home so a thread outlives its run's ephemeral home. Omit to skip state-sharing
+   * (config-only tests that never resume). Default `~/.dragoman/shared`. */
+  readonly sharedStore?: string;
 }
 
-/** Resolve the real and isolated homes from the environment. */
+/** Resolve the real, isolated, and shared-store paths from the environment. */
 export function codexHomeLayout(env: Record<string, string | undefined> = process.env): CodexHomeLayout {
   const realHome = env.CODEX_HOME ?? join(homedir(), ".codex");
   const dragomanHome = env.DRAGOMAN_HOME ?? join(homedir(), ".dragoman");
-  return { realHome, isolatedHome: join(dragomanHome, "codex-home") };
+  return { realHome, isolatedHome: join(dragomanHome, "codex-home"), sharedStore: join(dragomanHome, "shared") };
 }
 
 /**
@@ -48,9 +75,12 @@ export function ensureCodexHome(
   layout: CodexHomeLayout = codexHomeLayout(),
   rules = "",
 ): string {
-  const { realHome, isolatedHome } = layout;
+  const { realHome, isolatedHome, sharedStore } = layout;
   mkdirSync(isolatedHome, { recursive: true });
   linkFile(join(realHome, "auth.json"), join(isolatedHome, "auth.json"));
+  // Durable state (rollouts, index, caches) is symlinked in from the shared store so a
+  // thread survives this home's teardown and any later run/continuation can resume it.
+  if (sharedStore) shareState(isolatedHome, sharedStore);
 
   const userConfig = readIfPresent(join(realHome, "config.toml"));
   const spliced = spliceManagedBlock(userConfig, renderManagedBlock(profiles));
@@ -75,6 +105,25 @@ export function ensureCodexHome(
 function linkFile(target: string, link: string): void {
   rmSync(link, { force: true });
   if (existsSync(target)) symlinkSync(target, link);
+}
+
+/**
+ * Symlink the durable, shareable state (`SHARED_DIRS` + `SHARED_FILES`) into this home
+ * from the persistent store, so it outlives the home. Shared DIRS are pre-created (codex
+ * writes files into them through the link); shared FILES are linked even when absent —
+ * a dangling symlink resolves on codex's first write. Idempotent (relinked each call).
+ */
+function shareState(isolatedHome: string, store: string): void {
+  for (const name of SHARED_DIRS) mkdirSync(join(store, name), { recursive: true });
+  mkdirSync(store, { recursive: true });
+  for (const name of [...SHARED_DIRS, ...SHARED_FILES]) linkInto(join(store, name), join(isolatedHome, name));
+}
+
+/** Replace whatever is at `link` (a stale symlink, or a real dir/file codex created) with
+ * a fresh symlink to `target` — `target` need not exist yet (dangling links are fine). */
+function linkInto(target: string, link: string): void {
+  rmSync(link, { recursive: true, force: true });
+  symlinkSync(target, link);
 }
 
 function readIfPresent(path: string): string {

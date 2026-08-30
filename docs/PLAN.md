@@ -258,7 +258,24 @@ surface does. Changes made:
 8. **Secondary — `codex_review`.** DONE (prototyped, then built as a thin `codex_run`
    sibling). `codex_diff` dropped (Claude runs `git diff` itself).
 
-The landed tools sit behind the existing `FakeAppServer` unit seam
-(`test/lifecycle.test.ts`, `test/pump.test.ts`); a ratcheted live integration test for
-the resume + re-mirror path is the natural next verification step, matching how
-`codex_run` is locked.
+The landed tools sit behind the `FakeAppServer` unit seam (`test/lifecycle.test.ts`,
+`test/pump.test.ts`) AND ratcheted live integration tests
+(`test/integration/continue-review.integration.test.ts`) for the two paths units can't
+lock: `codex_continue` resume-with-context and `codex_review` on a real diff.
+
+### Discovered + fixed: continue's thread persistence
+
+Writing the live `codex_continue` test surfaced a real bug the unit tests couldn't:
+each run's thread rollout lived in its **ephemeral per-run `CODEX_HOME`**, which
+`main.ts` deletes on dispose — so `thread/resume` in a fresh home failed with
+`-32600: no rollout found`. `codex_continue` was silently broken in production; the
+test earned its keep. Fix (`codex-home.ts`): isolate only what must be per-run
+(`config.toml`, `rules/`) and symlink the durable state (`sessions/` +
+`session_index.jsonl`, plus `cache/`/`models_cache.json` for perf) into every home from
+one persistent store (`~/.dragoman/shared`). A design detour first ruled out the
+tempting "one shared home + config layer" alternative: `codex app-server` doesn't expose
+`--profile`, and — decisively — execpolicy `rules/` is a *global-per-home filesystem*
+convention with no config path, so no single shared home can isolate it. Per-run homes
+are structurally required; sharing state via symlink is the correct resolution, not a
+workaround. Full rationale in `docs/DESIGN.md` (Per-run spawn — isolated config, shared
+state).

@@ -31,6 +31,29 @@ describe("ensureCodexHome", () => {
     expect(existsSync(isolatedHome)).toBe(true);
   });
 
+  test("with a sharedStore, durable state is symlinked in so it outlives the home", () => {
+    const sharedStore = join(root, "shared");
+    ensureCodexHome([], { realHome, isolatedHome, sharedStore });
+
+    // sessions/index are the correctness-critical share; both point at the store.
+    const sessions = join(isolatedHome, "sessions");
+    expect(lstatSync(sessions).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(sessions)).toBe(join(sharedStore, "sessions"));
+    expect(lstatSync(join(isolatedHome, "session_index.jsonl")).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(isolatedHome, "session_index.jsonl"))).toBe(join(sharedStore, "session_index.jsonl"));
+
+    // A rollout written through the link lands in the store, so deleting THIS home
+    // keeps it — the whole point (codex_continue resumes from the store).
+    writeFileSync(join(sessions, "rollout.jsonl"), "x");
+    rmSync(isolatedHome, { recursive: true, force: true });
+    expect(existsSync(join(sharedStore, "sessions", "rollout.jsonl"))).toBe(true);
+  });
+
+  test("without a sharedStore, no state is shared (config-only homes)", () => {
+    ensureCodexHome([], { realHome, isolatedHome });
+    expect(existsSync(join(isolatedHome, "sessions"))).toBe(false);
+  });
+
   test("symlinks auth.json to the real home (real auth, isolated config)", () => {
     ensureCodexHome(profiles, { realHome, isolatedHome });
     const link = join(isolatedHome, "auth.json");

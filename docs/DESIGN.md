@@ -50,10 +50,22 @@ the user's config **plus** a managed profile block and execpolicy rules. Mirrori
 is fully contained — it never touches the real `~/.codex`. The managed permission
 profile is the single sandbox path (scope + filesystem + network as one renderer).
 
-## Per-run spawn
+## Per-run spawn — isolated config, shared state
 
 Every `codex_run` provisions its **own** app-server from the settings read at that
-moment — full isolation, and the live mode is always current. Caching is a later
+moment — the live mode is always current. But the isolation is deliberately **narrow**:
+only what must be per-run is isolated — `config.toml` (the managed profile + the global
+`network_proxy` flag) and `rules/` (Claude's live allow/deny as execpolicy, discovered
+globally per home). Both are filesystem-level and differ per run, which is the whole
+reason the home is per-run.
+
+Everything durable is **shared**: a thread's rollout (`sessions/` + `session_index.jsonl`)
+is symlinked in from one persistent store (`~/.dragoman/shared`), so it survives the
+home's teardown and `codex_continue` can `thread/resume` it later — without sharing, a
+fresh home gives `-32600: no rollout found`. (Isolating config never meant isolating
+history; `auth.json` already made the same move to the real home. The volatile sqlite
+state and locks stay per-run — sharing them across concurrent processes would risk
+corruption, and resume rebuilds from the rollout without them.) Caching is a later
 decorator over `provision`, never edited into the core.
 
 ## Async approval bridge
