@@ -43,7 +43,11 @@ export function codexHomeLayout(env: Record<string, string | undefined> = proces
  * to `:workspace` to preserve Codex's normal posture, and otherwise respect the
  * value the user already carries in their config.
  */
-export function ensureCodexHome(profiles: readonly ManagedProfile[], layout: CodexHomeLayout = codexHomeLayout()): string {
+export function ensureCodexHome(
+  profiles: readonly ManagedProfile[],
+  layout: CodexHomeLayout = codexHomeLayout(),
+  rules = "",
+): string {
   const { realHome, isolatedHome } = layout;
   mkdirSync(isolatedHome, { recursive: true });
   linkFile(join(realHome, "auth.json"), join(isolatedHome, "auth.json"));
@@ -55,6 +59,14 @@ export function ensureCodexHome(profiles: readonly ManagedProfile[], layout: Cod
   // Codex's normal posture; a user's own value is kept.
   const config = profiles.length > 0 ? withDefaultPermissions(spliced, ":workspace") : spliced;
   writeAtomic(join(isolatedHome, "config.toml"), config);
+
+  // Claude's allow/deny Bash rules as an execpolicy file, where Codex auto-discovers
+  // it (`CODEX_HOME/rules/*.rules`). This is the config-layer enforcement that binds
+  // for every command, independent of the approval round-trip. Empty ⇒ no file.
+  if (rules !== "") {
+    mkdirSync(join(isolatedHome, "rules"), { recursive: true });
+    writeAtomic(join(isolatedHome, "rules", "dragoman.rules"), rules);
+  }
 
   return isolatedHome;
 }

@@ -300,29 +300,43 @@ in-workspace commands to prompt too. See Open.
 
 ## Open
 
-### Security findings (from the mode-mapping review)
+### Config-layer command enforcement — execpolicy `.rules`
 
-Root cause shared by A + B: Dragoman's gates (`denyPrefixes`, `commandFallback`,
-`fileChange`) run **only inside the approval handler**, which fires only on sandbox
-*escapes*. In-workspace commands auto-run untouched, and `auto` (closed
-`auto_review` loop) and `bypassPermissions` (`never`) round-trip no approval at all.
-The fix for both is **config-layer enforcement**: emit execpolicy rules into the
-generated `config.toml` so Codex contains commands itself, independent of approval
-routing or mode. (Per-approval `ExecPolicyAmendment` exists; confirm the static
-config-file equivalent first.)
+Dragoman's per-approval gates (`denyPrefixes`, `commandFallback`) fire **only inside
+the approval handler**, which only runs on sandbox *escapes*. So a rule couldn't reach
+in-workspace commands, nor `auto`/`bypassPermissions` (which round-trip no approval at
+all). The fix — now implemented — is **config-layer enforcement**: `provision` writes
+Claude's allow/deny Bash rules as a Codex **execpolicy `.rules` file** at
+`CODEX_HOME/rules/dragoman.rules`, which Codex auto-discovers and enforces for EVERY
+command, independent of the approval round-trip. (This is NOT a `config.toml` table —
+execpolicy lives in `rules/*.rules`, a `prefix_rule(pattern=[…], decision=…)` DSL. The
+per-approval `ExecPolicyAmendment` is literally "append an allow `prefix_rule`", so the
+static equivalent is to write those lines ourselves.) See `renderRules` in
+`codex-config.ts`. Verified live against codex-cli 0.150.1
+(`execpolicy.integration.test.ts`, `execpolicy-bind.experiment.ts`):
 
-- **[A] In-workspace commands auto-run past the gate** (High). `dontAsk` ("only
-  pre-approved") still runs a non-allow-listed command that doesn't hit the sandbox
-  wall (e.g. `python3 -c …`); `commandFallback: "decline"` only fires for escapes.
-  Partly mitigated (Manual/plan/dontAsk are now `:read-only`), but not closed. Fix:
-  a **default-deny execpolicy** for `dontAsk` whose only allows are the mirrored
-  allow-prefixes.
-- **[B] Claude `deny` Bash rules are not enforced** (High) for in-workspace
-  commands, and **entirely unenforced in `auto` and `bypassPermissions`** (no
-  approval round-trip). Claude applies `deny` in every mode. Fix: emit the `deny`
-  prefixes as execpolicy **forbid** rules in `config.toml`.
+- **[B] Claude `deny` Bash rules enforced in every mode** — ✅ FIXED. `deny` prefixes →
+  `decision="forbidden"`: blocked unconditionally, **including `auto` and
+  `bypassPermissions`** (verified: a `forbidden touch` is refused even under `never` +
+  dangerFullAccess, and the "Claude deny rule" justification surfaces in the rejection).
+- **Allow rules as an override** — ✅ DONE. `allow` prefixes → `decision="allow"`: the
+  command runs **without prompting, in every mode** — an override over the mode's base
+  (verified: an allowed `python3` runs with no client approval under `untrusted`/manual,
+  where the same command otherwise prompts). Codex takes the strictest match, so a
+  prefix in both lists is `forbidden` — mirroring Claude's "deny wins".
+- **[A] `dontAsk` in-workspace commands** (partial). execpolicy can't express a
+  default-deny-with-allowlist: matching is strictest-wins (`forbidden > prompt > allow`),
+  so a catch-all `forbidden`/`prompt` would override the allow-list too. So `dontAsk`
+  stays **pump-handled**: `untrusted` raises non-trusted in-workspace commands, and
+  `commandFallback: "decline"` refuses them; allow-listed commands run via the config
+  allow rule. Residual: Codex's own *trusted* commands (e.g. `ls`) auto-run in `dontAsk`
+  without a prompt — a smaller gap to probe/close separately.
 - **[C] acceptEdits auto-accepted escaped edits/commands** — ✅ FIXED
   (`081f87e`): acceptEdits now elicits escapes and injects no fs-command allows.
+
+The isolated `CODEX_HOME` carries only Dragoman's derived rules (from Claude's config);
+the user's own `~/.codex/rules/*` are not read under Dragoman, matching how the compiler
+derives the whole posture from Claude.
 
 ### Fidelity / features
 

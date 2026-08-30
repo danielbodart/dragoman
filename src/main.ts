@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { AppServerProcess } from "./codex.ts";
 import { codexHomeLayout, ensureCodexHome } from "./codex-home.ts";
+import { renderRules } from "./codex-config.ts";
 import { McpElicitationChannel } from "./elicitation.ts";
 import { buildServer, serve } from "./mcp.ts";
 import { startPump } from "./pump.ts";
@@ -103,10 +104,15 @@ export async function main(argv: readonly string[]): Promise<number> {
       // (none → danger-full-access). Inherits the user's auth/config, never
       // touches the real ~/.codex.
       const runDir = join(runsRoot, crypto.randomUUID());
-      const home = ensureCodexHome(policy.profile ? [policy.profile] : [], {
-        realHome,
-        isolatedHome: join(runDir, "codex-home"),
-      });
+      // Claude's allow/deny Bash rules ride an execpolicy `.rules` file (config-layer
+      // enforcement, binds for every command incl. auto/bypass); the profile carries
+      // scope + fs + network. Both are compiled from the composite by `mirror`.
+      const rules = renderRules(policy.execpolicyAmendments, policy.denyPrefixes);
+      const home = ensureCodexHome(
+        policy.profile ? [policy.profile] : [],
+        { realHome, isolatedHome: join(runDir, "codex-home") },
+        rules,
+      );
       const conn = await AppServerProcess.start(parsed.codexCommand, { CODEX_HOME: home });
       return {
         conn,

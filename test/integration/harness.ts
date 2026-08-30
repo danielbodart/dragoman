@@ -21,6 +21,7 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { AppServerProcess, type AppServerConn } from "../../src/codex.ts";
 import { ensureCodexHome } from "../../src/codex-home.ts";
+import { renderRules } from "../../src/codex-config.ts";
 import { profileFor, type ClaudeMode } from "../../src/mirror.ts";
 import { startPump } from "../../src/pump.ts";
 import { ThreadRuns } from "../../src/thread-run.ts";
@@ -86,7 +87,11 @@ export function profiledRuns(effective: EffectiveSettings, elicitation: Scripted
   const runs: ThreadRuns = new ThreadRuns(
     async (policy) => ({
       conn: await AppServerProcess.start(["codex", "app-server"], {
-        CODEX_HOME: ensureCodexHome(policy.profile ? [policy.profile] : [], layout),
+        CODEX_HOME: ensureCodexHome(
+          policy.profile ? [policy.profile] : [],
+          layout,
+          renderRules(policy.execpolicyAmendments, policy.denyPrefixes),
+        ),
       }),
     }),
     (conn) => startPump(conn, runs, elicitation),

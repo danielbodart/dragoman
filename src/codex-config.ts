@@ -112,6 +112,41 @@ export function renderManagedBlock(profiles: readonly ManagedProfile[]): string 
 }
 
 /**
+ * Claude's allow/deny Bash rules as a Codex execpolicy `.rules` file (dropped at
+ * `CODEX_HOME/rules/dragoman.rules`, where Codex auto-discovers it). This is the
+ * CONFIG-LAYER enforcement: it binds for EVERY command — in-workspace runs and
+ * escapes alike — independent of the approval round-trip, so it reaches the modes the
+ * per-approval gate can't (`auto`, `bypassPermissions` round-trip no approval at all).
+ *
+ *   - `allow` prefixes → `prefix_rule(decision="allow")`: the command runs WITHOUT a
+ *     prompt, an override over the mode's base (verified: skips the prompt even under
+ *     `untrusted`/manual).
+ *   - `deny` prefixes → `decision="forbidden"`: blocked in EVERY mode, unconditionally
+ *     (verified: blocks even under `never`/bypass; the justification surfaces in the
+ *     rejection). Codex takes the strictest match, so `forbidden` wins over `allow`
+ *     for a prefix in both lists — mirroring Claude's "deny wins".
+ *
+ * Token prefixes are the same ones `mirror` derives from `Bash(...)` rules. Empty
+ * lists → "" (provision writes no file). Verified against codex-cli 0.150.1.
+ */
+export function renderRules(
+  allow: readonly (readonly string[])[],
+  deny: readonly (readonly string[])[],
+): string {
+  const lines: string[] = [];
+  for (const prefix of deny) lines.push(prefixRule(prefix, "forbidden", "Claude deny rule"));
+  for (const prefix of allow) lines.push(prefixRule(prefix, "allow"));
+  return lines.length > 0 ? lines.join("\n") + "\n" : "";
+}
+
+/** One `prefix_rule(...)` line. Tokens are JSON-encoded (Starlark string literals). */
+function prefixRule(prefix: readonly string[], decision: string, justification?: string): string {
+  const pattern = prefix.map((token) => JSON.stringify(token)).join(", ");
+  const reason = justification ? `, justification=${JSON.stringify(justification)}` : "";
+  return `prefix_rule(pattern=[${pattern}], decision=${JSON.stringify(decision)}${reason})`;
+}
+
+/**
  * Emit a profile's `filesystem` axis: the top-level path map, then the
  * `:workspace_roots` sub-table for root-relative paths + globs. `glob_scan_max_depth`
  * (when set) leads the top-level table — it must sit under the `[…filesystem]`

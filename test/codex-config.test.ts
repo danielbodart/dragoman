@@ -2,11 +2,36 @@ import { describe, expect, test } from "bun:test";
 import {
   hasDefaultPermissions,
   renderManagedBlock,
+  renderRules,
   spliceManagedBlock,
   stripManagedBlock,
   withDefaultPermissions,
   type ManagedProfile,
 } from "../src/codex-config.ts";
+
+describe("renderRules — allow/deny Bash rules → execpolicy .rules file", () => {
+  test("deny prefixes → forbidden, allow prefixes → allow (deny first)", () => {
+    const out = renderRules([["npm", "run", "test"]], [["git", "push"]]);
+    expect(out).toBe(
+      'prefix_rule(pattern=["git", "push"], decision="forbidden", justification="Claude deny rule")\n' +
+        'prefix_rule(pattern=["npm", "run", "test"], decision="allow")\n',
+    );
+  });
+
+  test("no rules → empty string (provision writes no file)", () => {
+    expect(renderRules([], [])).toBe("");
+  });
+
+  test("tokens are JSON-escaped (Starlark string literals)", () => {
+    // A token with a quote/backslash must not break the rule syntax.
+    expect(renderRules([['weird"tok']], [])).toBe('prefix_rule(pattern=["weird\\"tok"], decision="allow")\n');
+  });
+
+  test("only-deny and only-allow each render on their own", () => {
+    expect(renderRules([], [["rm", "-rf"]])).toContain('decision="forbidden"');
+    expect(renderRules([["ls"]], [])).toBe('prefix_rule(pattern=["ls"], decision="allow")\n');
+  });
+});
 
 const profile: ManagedProfile = {
   id: "dragoman-workspace",
