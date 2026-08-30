@@ -291,6 +291,23 @@ describe("the approval bridge — the anti-hang property", () => {
     expect(runs.status(threadId)?.status).toBe("running");
   });
 
+  test("a human approval rides the LOSSLESS beat sequence (waiting + outcome), never missed at a poll boundary", async () => {
+    const { conn, elicitation, runs, threadId } = bridge();
+    await runs.start("go", "/repo");
+    // Fire an approval and answer it — a fast answer flips the status back to running.
+    const reply = conn.emitServerRequest(requestApproval(threadId, "bash -lc 'python3 -c pass'"));
+    await Bun.sleep(1);
+    elicitation.answer("accept");
+    await reply;
+    expect(runs.status(threadId)?.status).toBe("running"); // the waiting STATUS has already lifted
+
+    // A poll that only fires now — after the answer — still drains BOTH the waiting and
+    // the outcome beats. The status snapshot alone would have lost the whole approval.
+    const beats = runs.drainBeats(threadId).map((b) => b.text);
+    expect(beats).toContain("waiting for your approval: run `bash -lc 'python3 -c pass'`");
+    expect(beats).toContain("you approved: run `bash -lc 'python3 -c pass'`");
+  });
+
   test("a file-change approval is elicited to the human, then replies with the decision", async () => {
     const { conn, elicitation, runs, threadId } = bridge();
     await runs.start("do the thing", "/repo"); // wires the pump (connects lazily)

@@ -90,6 +90,40 @@ async function handleServerRequest(
   }
 }
 
+/**
+ * Put a run into the waiting-for-human state AND append a lossless beat, so a pending
+ * approval rides the same drained sequence as everything else and is NEVER lost at a
+ * polling boundary. The bare `waiting-approval` *status* is a snapshot (latest wins),
+ * so a fast answer flips it back to `running` before a coarse poll ever sees it — the
+ * missed-feedback bug (a re-prompt because the caller never saw the first). Beats are
+ * drained in order, so they can't be skipped — mirroring how auto-approvals ride the
+ * feed. Returns the beat text so the resolution can echo the same subject.
+ */
+function raiseApproval(runs: ThreadRuns, threadId: string, what: string): void {
+  const run = runs.record(threadId);
+  if (!run) return;
+  run.status = "waiting-approval";
+  appendBeat(run, `waiting for your approval: ${what}`);
+  runs.bump(threadId);
+}
+
+/** Record the human's answer as a lossless beat and leave the waiting state. */
+function resolveApproval(runs: ThreadRuns, threadId: string, decision: string, what: string): void {
+  const run = runs.record(threadId);
+  if (!run) return;
+  if (run.status === "waiting-approval") run.status = "running";
+  const verb = decision === "accept" || decision === "acceptForSession" ? "you approved" : `you chose ${decision} for`;
+  appendBeat(run, `${verb}: ${what}`);
+  runs.bump(threadId);
+}
+
+/** Append a beat the way the notification loop does: newest snapshot + lossless queue. */
+function appendBeat(run: RunRecord, text: string): void {
+  const beat = { at: Date.now(), text };
+  run.latestBeat = beat;
+  (run.pendingBeats ??= []).push(beat);
+}
+
 /** Command-execution approval: mirror allow-prefixes, then route the rest through the human. */
 async function handleCommandApproval(
   params: CommandExecutionRequestApprovalParams,
@@ -113,18 +147,15 @@ async function handleCommandApproval(
   // asking; every other mode routes the decision to the human.
   if (run?.commandFallback === "decline") return { decision: "decline" };
 
-  if (run) {
-    run.status = "waiting-approval";
-    runs.bump(params.threadId); // wake a long-poll: a decision is now pending
-  }
+  const what = `run \`${params.command ?? "a command"}\``;
+  raiseApproval(runs, params.threadId, what);
 
   const decisions = availableDecisions(params);
   const decision = await elicitation.ask({ prompt: promptFor(params), decisions });
 
-  // The turn resumes once Codex has the decision; move back off the waiting
-  // state so `codex_status` stops reporting a pending approval. A later
-  // notification will refine this (running again, or done).
-  if (run && run.status === "waiting-approval") run.status = "running";
+  // The turn resumes once Codex has the decision; the lossless resolution beat lets a
+  // coarse poller see the outcome even though the waiting status has already lifted.
+  resolveApproval(runs, params.threadId, decision, what);
 
   return { decision };
 }
@@ -148,17 +179,16 @@ async function handleFileChangeApproval(
   if (run?.fileChange === "accept") return { decision: "accept" };
   if (run?.fileChange === "decline") return { decision: "decline" };
 
-  if (run) {
-    run.status = "waiting-approval";
-    runs.bump(params.threadId);
-  }
   const where = params.grantRoot ? ` under \`${params.grantRoot}\`` : "";
   const reason = params.reason ? ` — ${params.reason}` : "";
+  const what = `write files${where}`;
+  raiseApproval(runs, params.threadId, what);
+
   const decision = await elicitation.ask({
     prompt: `Codex wants to write files${where}${reason}`,
     decisions: ["accept", "acceptForSession", "decline", "cancel"],
   });
-  if (run && run.status === "waiting-approval") run.status = "running";
+  resolveApproval(runs, params.threadId, decision, what);
   return { decision };
 }
 
@@ -182,12 +212,10 @@ async function handlePermissionsApproval(
   const run = runs.record(params.threadId);
   if (run?.commandFallback === "decline") return denyPermissions();
 
-  if (run) {
-    run.status = "waiting-approval";
-    runs.bump(params.threadId);
-  }
+  const what = "expand its permissions";
+  raiseApproval(runs, params.threadId, what);
   const decision = await elicitation.ask({ prompt: permissionsPromptFor(params), decisions: ["accept", "decline"] });
-  if (run && run.status === "waiting-approval") run.status = "running";
+  resolveApproval(runs, params.threadId, decision, what);
 
   if (decision !== "accept") return denyPermissions();
   const requested = params.permissions;
