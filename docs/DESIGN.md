@@ -59,14 +59,18 @@ only what must be per-run is isolated — `config.toml` (the managed profile + t
 globally per home). Both are filesystem-level and differ per run, which is the whole
 reason the home is per-run.
 
-Everything durable is **shared**: a thread's rollout (`sessions/` + `session_index.jsonl`)
-is symlinked in from one persistent store (`~/.dragoman/shared`), so it survives the
-home's teardown and `codex_continue` can `thread/resume` it later — without sharing, a
-fresh home gives `-32600: no rollout found`. (Isolating config never meant isolating
-history; `auth.json` already made the same move to the real home. The volatile sqlite
-state and locks stay per-run — sharing them across concurrent processes would risk
-corruption, and resume rebuilds from the rollout without them.) Caching is a later
-decorator over `provision`, never edited into the core.
+Everything durable is **shared**, split by what it is. The thread rollout (`sessions/` +
+`session_index.jsonl`) is symlinked in from a Dragoman-owned store (`~/.dragoman/shared`),
+so it survives the home's teardown and `codex_continue` can `thread/resume` it later —
+without sharing, a fresh home gives `-32600: no rollout found`. It's kept in Dragoman's
+own store, NOT the real `~/.codex`, so Dragoman never writes history into the user's
+codex or pollutes their `codex resume` list. Caches (`cache/` + `models_cache.json`), by
+contrast, symlink to the REAL home — pure perf, regenerable, so a run starts on the
+user's already-warm model cache; performance wins over containment there. (`auth.json`
+already makes the same move to the real home. The volatile sqlite state and locks stay
+per-run — sharing them across concurrent processes would risk corruption, and resume
+rebuilds from the rollout without them.) Caching is a later decorator over `provision`,
+never edited into the core.
 
 ## Async approval bridge
 

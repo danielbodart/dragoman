@@ -42,6 +42,10 @@ describe("ensureCodexHome", () => {
     expect(lstatSync(join(isolatedHome, "session_index.jsonl")).isSymbolicLink()).toBe(true);
     expect(readlinkSync(join(isolatedHome, "session_index.jsonl"))).toBe(join(sharedStore, "session_index.jsonl"));
 
+    // Caches point at the REAL home (warm start), NOT the contained store.
+    expect(readlinkSync(join(isolatedHome, "cache"))).toBe(join(realHome, "cache"));
+    expect(readlinkSync(join(isolatedHome, "models_cache.json"))).toBe(join(realHome, "models_cache.json"));
+
     // A rollout written through the link lands in the store, so deleting THIS home
     // keeps it — the whole point (codex_continue resumes from the store).
     writeFileSync(join(sessions, "rollout.jsonl"), "x");
