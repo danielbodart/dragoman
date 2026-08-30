@@ -27,8 +27,8 @@ outside that sandbox doesn't escalate — it just **fails**, and the model works
 it or gives up. And **none of Claude's permission mode, sandbox scope or settings reach
 Codex**, so you run it on one fixed posture, not the guardrails you carefully set.
 
-Dragoman wires Codex's approvals, progress and permissions straight onto Claude Code's
-own machinery:
+Dragoman extends Claude Code's own machinery — approvals, progress and permissions —
+out to Codex:
 
 | On the axes that matter | Official Codex plugin | Dragoman |
 |---|---|---|
