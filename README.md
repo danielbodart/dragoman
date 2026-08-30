@@ -20,23 +20,22 @@ also a genuine outside pair of eyes for a second implementation, a review, or a 
 root-cause hunt. Dragoman lets Claude hand any of these to Codex and hear the answer
 back in Codex's own voice.
 
-But the official Codex plugin traps that agent behind a batch-job interface, running
-it as a black box: when Codex pauses to ask _"may I run this?"_ the plugin
-**rejects the request and hangs** — your only escape is to switch the sandbox off
-(`danger-full-access`) and hope. You watch **one final blob**, never the work in
-flight. And **none of Claude's permissions, modes or sandbox rules reach Codex**, so
-you run it without the guardrails you carefully set.
+But the official Codex plugin runs that agent with **approvals switched off**: it
+hard-codes `approvalPolicy: never` and a fixed sandbox — read-only, or workspace-write
+only when you pass `--write`. So Codex never asks you anything. Work that needs to step
+outside that sandbox doesn't escalate — it just **fails**, and the model works around
+it or gives up. And **none of Claude's permission mode, sandbox scope or settings reach
+Codex**, so you run it on one fixed posture, not the guardrails you carefully set.
 
-Dragoman talks to Codex's supported **app-server** and wires its approvals, progress
-and permissions straight onto Claude Code's own machinery:
+Dragoman wires Codex's approvals, progress and permissions straight onto Claude Code's
+own machinery:
 
 | On the axes that matter | Official Codex plugin | Dragoman |
 |---|---|---|
-| Approvals | hang — must disable the sandbox | native async prompt, in Claude's own UI |
-| Progress | one final blob | live heartbeat you can poll |
-| Permissions, mode & sandbox | not mapped | mirror Claude's live settings, per turn |
-| Course-correcting a run | can't — wait out the batch job | steer it mid-flight, or stop it, without a restart |
-| Follow-ups | every task starts cold | continue on the same thread, keeping its context |
+| Permissions, mode & sandbox | fixed posture, ignores Claude's settings | mirror Claude's live mode, sandbox & settings, per turn |
+| Approvals | switched off — Codex never asks, out-of-sandbox work just fails | native async prompt in Claude's own UI, so Codex escalates under your rules |
+| Progress | a phase and the tail of the raw log | a heartbeat of milestones — none of the noise |
+| Steering a run | cancel only | steer it mid-flight, or stop it, without a restart |
 
 ## The idea in one line
 
