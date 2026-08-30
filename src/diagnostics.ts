@@ -21,7 +21,7 @@ import { join } from "node:path";
 import { mirror, resolveMode } from "./mirror.ts";
 import { readSettings } from "./settings.ts";
 import type { ThreadRuns } from "./thread-run.ts";
-import type { RunEvent } from "./model.ts";
+import type { RunEvent, RunUsage } from "./model.ts";
 import { version } from "./version.ts";
 
 /** One live (or recently-settled) run, as the probe reports it. */
@@ -76,6 +76,10 @@ export interface MirrorPosture {
 export interface DiagnosticsReport {
   readonly version: string;
   readonly activeRuns: readonly ActiveRun[];
+  /** The account-global rate-limit windows (5h / weekly) as percentages used —
+   * accumulated in the background, reported here rather than on every status poll.
+   * Each run's own context percentage rides its `ActiveRun.ctx`. */
+  readonly rateLimits: RunUsage;
   readonly cwd: string;
   readonly env: Readonly<Record<string, string | null>>;
   readonly projectDir: string;
@@ -107,6 +111,7 @@ export function diagnostics(runs?: ThreadRuns): DiagnosticsReport {
   return {
     version,
     activeRuns: activeRuns(runs),
+    rateLimits: runs?.accountLimits() ?? {},
     cwd: process.cwd(),
     env: envSnapshot(),
     projectDir,

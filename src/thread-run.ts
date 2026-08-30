@@ -450,13 +450,13 @@ export class ThreadRuns {
   }
 
   /**
-   * A run's usage snapshot: the account-global rate-limit windows composed with
-   * this run's own context occupancy. Every field a percentage used (0–100);
-   * fields not yet observed are simply absent.
+   * The account-global rate-limit windows (5h / weekly) as accumulated so far,
+   * every field a percentage used (0–100); fields not yet observed are absent.
+   * Kept out of the `codex_status` hot path — surfaced by `diagnostics`, which
+   * pairs it with each run's own `ctx`.
    */
-  usage(handle: RunHandle): RunUsage {
-    const ctx = this.runs.get(handle)?.ctx;
-    return { ...this.accountUsage, ...(ctx !== undefined ? { ctx } : {}) };
+  accountLimits(): RunUsage {
+    return { ...this.accountUsage };
   }
 
   /**

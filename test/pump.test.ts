@@ -526,7 +526,7 @@ describe("usage — context window + rate-limit windows", () => {
     await runs.start("go", "/repo");
     conn.emit(tokenUsage(threadId, 50_000, 200_000));
     await Bun.sleep(1);
-    expect(runs.usage(threadId).ctx).toBe(25);
+    expect(runs.status(threadId)?.ctx).toBe(25);
   });
 
   test("an unknown context window leaves ctx unset (can't compute a percentage)", async () => {
@@ -534,7 +534,7 @@ describe("usage — context window + rate-limit windows", () => {
     await runs.start("go", "/repo");
     conn.emit(tokenUsage(threadId, 50_000, null));
     await Bun.sleep(1);
-    expect(runs.usage(threadId).ctx).toBeUndefined();
+    expect(runs.status(threadId)?.ctx).toBeUndefined();
   });
 
   test("rate-limit windows are labelled 5h/7d by duration, not by primary/secondary position", async () => {
@@ -544,16 +544,18 @@ describe("usage — context window + rate-limit windows", () => {
     // must still key on windowDurationMins, not position.
     conn.emit(rateLimits(10_080, 18, 300, 42));
     await Bun.sleep(1);
-    expect(runs.usage(threadId)).toMatchObject({ "5h": 42, "7d": 18 });
+    expect(runs.accountLimits()).toMatchObject({ "5h": 42, "7d": 18 });
   });
 
-  test("status composes account windows with the run's own context percentage", async () => {
+  test("rate limits (account-global) and ctx (per-run) accumulate separately, off the status hot path", async () => {
     const { conn, runs, threadId } = bridge();
     await runs.start("go", "/repo");
     conn.emit(rateLimits(300, 42, 10_080, 18));
     conn.emit(tokenUsage(threadId, 120_000, 200_000));
     await Bun.sleep(1);
-    expect(runs.usage(threadId)).toEqual({ "5h": 42, "7d": 18, ctx: 60 });
+    // The two live in different places now — diagnostics pairs them; status carries neither.
+    expect(runs.accountLimits()).toEqual({ "5h": 42, "7d": 18 });
+    expect(runs.status(threadId)?.ctx).toBe(60);
   });
 
   test("a sparse rate-limit update merges without clearing the other window", async () => {
@@ -568,7 +570,7 @@ describe("usage — context window + rate-limit windows", () => {
       params: { rateLimits: { limitId: null, limitName: null, primary: { usedPercent: 55, windowDurationMins: 300, resetsAt: null }, secondary: null, credits: null, individualLimit: null, spendControlReached: null, planType: null, rateLimitReachedType: null } } as never,
     });
     await Bun.sleep(1);
-    expect(runs.usage(threadId)).toMatchObject({ "5h": 55, "7d": 18 });
+    expect(runs.accountLimits()).toMatchObject({ "5h": 55, "7d": 18 });
   });
 });
 

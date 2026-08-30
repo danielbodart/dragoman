@@ -16,20 +16,20 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { diagnostics } from "./diagnostics.ts";
 import type { ThreadRuns } from "./thread-run.ts";
-import type { RunEvent, RunStatus, RunUsage } from "./model.ts";
+import type { RunEvent, RunStatus } from "./model.ts";
 import type { ReviewTarget } from "../generated/codex-protocol/ts/v2/ReviewTarget.ts";
 import { version } from "./version.ts";
 
 /**
  * A `codex_status` payload — the run's live state as STRUCTURED data, returned
- * verbatim as `structuredContent`. `events` are the milestones drained this poll
- * (typed, never a prose line the caller has to parse); `usage` is the percentage
- * snapshot (5h / weekly rate-limit windows + this thread's context occupancy).
+ * verbatim as `structuredContent`. Deliberately lean: just the status and the
+ * milestones drained this poll (typed, never a prose line the caller has to
+ * parse). Usage percentages are NOT here — they'd ride every poll for no reason;
+ * they accumulate in the background and surface on demand via `diagnostics`.
  */
 export interface StatusResult {
   readonly handle: string;
   readonly status: RunStatus;
-  readonly usage: RunUsage;
   readonly events: readonly RunEvent[];
 }
 
@@ -320,8 +320,9 @@ async function statusCodex(runs: ThreadRuns, args: Record<string, unknown>): Pro
 
   // Drain the one timeline — every event (tool milestone, approval, Codex message,
   // terminal outcome), whatever its source, delivered exactly once, in order — and
-  // hand it back as structured data alongside the run's status and usage snapshot.
-  return { handle, status: run.status, usage: runs.usage(handle), events: runs.drain(handle) };
+  // hand it back as structured data alongside the run's status. Usage stays out of
+  // the hot path (see StatusResult); it's read from diagnostics when wanted.
+  return { handle, status: run.status, events: runs.drain(handle) };
 }
 
 /**
