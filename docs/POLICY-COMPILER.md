@@ -38,6 +38,21 @@ may fan out to several Codex knobs, and several Claude settings may fold into on
 
 This stage already exists and is unit-tested against fixture trees with no IO.
 
+### Sourcing the LIVE mode (not just the static default)
+
+The composite carries `permissions.defaultMode` — the *static* mode from settings.json.
+But the mode a user is in **right now** (a mid-session switch to `plan`/`acceptEdits`/…)
+is session state the MCP server can't read: diagnostics showed `defaultMode=auto` while
+the session was interactively in manual. A **PreToolUse hook** is the one place the live
+mode is exposed — Claude Code passes it on stdin as `.permission_mode`. So
+`packaging/inject-posture.sh` (matched narrowly on `codex_run`) reads it and merges it
+into the tool input as `posture`; `runCodex` already mirrors `posture`, so the server
+needs no change. Resolution order stays: explicit `posture` (a deliberate override the
+model set, respected) ?? the hook-injected live mode ?? static `defaultMode` ?? safe
+default. Verified live: a manual→auto switch was picked up between two runs. (Caveat
+found: a PreToolUse `updatedInput` REPLACES the tool input, so the hook echoes the whole
+input back with `posture` added, not just the delta.)
+
 ## Stage 2 — Compile (pure, in-memory)
 
 ```ts
