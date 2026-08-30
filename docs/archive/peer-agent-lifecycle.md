@@ -1,4 +1,11 @@
-# Plan: the full peer-agent lifecycle
+# The full peer-agent lifecycle
+
+> **LANDED & ARCHIVED (2026-08-30).** Every item in this plan shipped to trunk and is
+> covered by tests. Kept as the design record for the peer-agent tools — the lifecycle
+> tools (`codex_cancel`/`codex_steer`/`codex_continue`), the unified event-log substrate,
+> the Codex→agent back-channel, `codex_review`, the shared-store session persistence, and
+> the heartbeat tuning — including the reasoning and rejected alternatives behind each.
+> Live behaviour is authoritative in `docs/DESIGN.md` and the code; this is history.
 
 _Status: the foundation, the production `diagnostics` probe, all three lifecycle
 tools (`codex_cancel`, `codex_steer`, `codex_continue`), the unified event-log

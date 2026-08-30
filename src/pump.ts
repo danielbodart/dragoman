@@ -404,7 +404,7 @@ function apply(notification: Notification, runs: ThreadRuns): void {
   }
 
   // Codex's own words mid-run — an agentMessage item completing — are its
-  // back-channel to the driving agent (docs/PLAN.md): surface them as `message`
+  // back-channel to the driving agent (docs/archive/peer-agent-lifecycle.md): surface them as `message`
   // events so a note Codex emits reaches the agent on its next poll. The FINAL
   // message also rides turn/completed as the `result`; the dedupe there upgrades a
   // just-streamed final message in place rather than delivering it twice.

@@ -29,7 +29,7 @@ export interface Beat {
  * approval raised/resolved by the server-request handler, a note from Codex, or the
  * terminal outcome. All producers `append` a `RunEvent`; `codex_status` drains the
  * log and renders it — so a new source can never reintroduce the "we dropped that
- * one" bug, because there is exactly one place state is kept (docs/PLAN.md: the
+ * one" bug, because there is exactly one place state is kept (docs/archive/peer-agent-lifecycle.md: the
  * back-channel table). `kind` distinguishes the terminal outcome ("Done. …" /
  * "Errored …") from in-flight entries so the renderer can phrase it, and marks a
  * `message` — Codex's own words mid-run, its back-channel to the driving agent —
