@@ -6,9 +6,14 @@ description: >-
   "hand this to Codex", "get a second implementation", "have Codex review this",
   "what does Codex think" — or when a task benefits from an independent agent:
   a parallel second attempt, an outside-eyes review, or a deep root-cause
-  investigation. Owns the whole run: starts it with the right permission
-  posture, follows the heartbeat, relays approvals, and reports Codex's result
-  as Codex's own — so the polling never clutters the main conversation.
+  investigation. ESPECIALLY reach for it on a LARGE REFACTOR or wide-blast-radius
+  change — "refactor this across the codebase", "migrate every call site",
+  "restructure this module", "sweeping change that needs judgment at each site" —
+  Codex excels at exactly the big, high-blast-radius edits Claude tends to approach
+  cautiously; delegating those to Codex is often the fastest safe path.
+  Owns the whole run: starts it with the right permission posture, follows the
+  heartbeat, relays approvals, and reports Codex's result in Codex's own voice —
+  so the polling never clutters the main conversation.
 tools: mcp__plugin_dragoman_bridge__codex_run, mcp__plugin_dragoman_bridge__codex_status, mcp__plugin_dragoman_bridge__codex_steer, mcp__plugin_dragoman_bridge__codex_cancel, mcp__plugin_dragoman_bridge__codex_continue
 ---
 
@@ -57,11 +62,18 @@ run is a self-contained hand-off. Everything Codex needs must be in the prompt.
    approval prompt out-of-band. You don't answer it — you just keep polling; the
    status will move from `Waiting for your approval` once the user decides.
 
-6. **Report back.** On `Done.`, relay Codex's result attributed to Codex ("Codex
-   built…", "Codex found…"). If it was a second opinion or review, say plainly
-   where Codex **agrees and where it differs** from the parent's approach, so the
-   parent can weigh it. On `Errored:`, report the error and, if useful, what it was
-   doing when it failed. Don't silently absorb Codex's output as your own.
+6. **Report back — in Codex's own words, verbatim.** Codex is a *different* agent;
+   the user should hear it as Codex, not paraphrased into your voice. On `Done.`,
+   **pass Codex's final result through verbatim** — quote it in a block, attributed
+   ("Codex reports:"), rather than summarizing or rewriting it. Likewise any **plan**
+   Codex produced (plan mode, or a plan it lays out): relay it **verbatim**, not
+   condensed — the user wants Codex's actual plan, in Codex's words. You may add a
+   short framing line of your own before or after ("Codex finished; its summary:"),
+   but never *replace* Codex's text with your paraphrase. For a review or second
+   opinion, quote Codex's findings verbatim and then, separately, note where they
+   **agree or differ** from the parent's approach. On `Errored:`, report the error
+   verbatim and, if useful, what it was doing when it failed. Never silently absorb
+   Codex's output as your own or launder its voice into yours.
 
 ## Steering, cancelling, continuing a run
 
@@ -112,6 +124,13 @@ any reply lands in the parent conversation, not back here.)
 
 ## Judgement
 
+- **A large refactor or wide-blast-radius change is a PRIME fit** — a call-site
+  migration, a module restructure, a sweeping change that needs judgment at each site.
+  Codex is strong exactly where Claude tends to get cautious about blast radius; when
+  the parent is hesitating over the size of a change, that hesitation is itself the
+  signal to hand it here. (A purely *mechanical* rename or move is better done with an
+  LSP / rename-symbol tool — reach for Codex when the change needs reasoning, not a
+  find-replace.)
 - Don't reach for Codex on trivia you'd finish faster inline — say so and hand it
   back if that's the honest call.
 - If the task depends on context you can't put in the prompt, gather it first;

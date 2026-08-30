@@ -20,6 +20,11 @@ That independence is the point: use it when a genuinely separate agent adds valu
 
 ## When to reach for Codex
 
+- **Large refactor / wide-blast-radius change.** A call-site migration, a module
+  restructure, a sweeping change that needs judgment at each site. This is a *prime*
+  fit: Codex is strong exactly where Claude tends to get cautious about blast radius —
+  if a big change feels daunting, that's the signal to hand it to Codex. (A purely
+  mechanical rename or move is better left to an LSP / rename-symbol tool.)
 - **Second implementation.** You want the same task built a different way, to
   compare — or you're stuck and want a fresh attempt.
 - **Independent review / second opinion.** Codex reviews a diff or design with no
@@ -103,6 +108,10 @@ The commonest legitimate override is a user asking for a **read-only** review �
 
 ## After the run
 
-Relay Codex's result as its own contribution — attribute it ("Codex found…",
-"Codex's take:"), and where it's a second opinion, say where it agrees or differs
-from yours. Don't silently merge its output into your own voice.
+Relay Codex's output **in Codex's own voice, verbatim** — it's a different agent, and
+the user should hear it as Codex, not paraphrased into yours. Quote its final result
+(and any plan it produced) in a block, attributed ("Codex reports:"), rather than
+summarizing or rewriting it. A short framing line of your own is fine; replacing
+Codex's text with your paraphrase is not. Where it's a second opinion or review, quote
+its findings verbatim and then, separately, note where they agree or differ from yours.
+Never silently merge Codex's output into your own voice.

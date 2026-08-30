@@ -12,7 +12,15 @@ languages** do business. That is exactly this tool's job.
 
 ## Why
 
-Codex is a superb agent trapped behind a batch-job interface. The official plugin
+Codex is a **different** agent with its own strengths — reach for it when a second,
+independent one earns its keep. It shines at **large refactors and wide-blast-radius
+changes**: call-site migrations, module restructures, sweeping changes that need
+judgment at each site — exactly the big changes Claude tends to approach cautiously. It's
+also a genuine outside pair of eyes for a second implementation, a review, or a deep
+root-cause hunt. Dragoman lets Claude hand any of these to Codex and hear the answer
+back in Codex's own voice.
+
+And Codex is a superb agent trapped behind a batch-job interface. The official plugin
 runs it like a black box: when Codex pauses to ask _"may I run this?"_ the plugin
 **rejects the request and hangs** — your only escape is to switch the sandbox off
 (`danger-full-access`) and hope. You watch **one final blob**, never the work in
