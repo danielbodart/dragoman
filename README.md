@@ -12,40 +12,27 @@ languages** do business. That is exactly this tool's job.
 
 ## Why
 
-The official Codex plugin drives Codex well but interfaces with Claude like a batch
-job. A few things make it feel primitive:
+Codex is a superb agent trapped behind a batch-job interface. The official plugin
+runs it like a black box: when Codex pauses to ask _"may I run this?"_ the plugin
+**rejects the request and hangs** — your only escape is to switch the sandbox off
+(`danger-full-access`) and hope. You watch **one final blob**, never the work in
+flight. And **none of Claude's permissions, modes or sandbox rules reach Codex**, so
+you run it without the guardrails you carefully set.
 
-- **Approvals don't work.** When Codex asks "may I run this command?", the plugin
-  rejects the request outright, so it hangs — unless you disable the sandbox
-  entirely (`danger-full-access`).
-- **Progress is invisible.** Claude sees one final blob, not what Codex is doing.
-- **Permissions and Mode** are not mapped, let alone fine grained sandbox rules
-
-Dragoman fixes both by talking to the Codex **app-server** — the one supported,
-actively-developed interface — and mapping its
-approval, mode, permissions and progress flows onto Claude Code's own native mechanisms.
+Dragoman talks to Codex's supported **app-server** and wires its approvals, progress
+and permissions straight onto Claude Code's own machinery:
 
 | On the axes that matter | Official Codex plugin | Dragoman |
 |---|---|---|
-| Approvals | hang — must disable the sandbox | native async prompt |
-| Progress | one final blob | live heartbeat |
-| Permissions & mode | not mapped | mirrors Claude's settings |
+| Approvals | hang — must disable the sandbox | native async prompt, in Claude's own UI |
+| Progress | one final blob | live heartbeat you can poll |
+| Permissions, mode & sandbox | not mapped | mirror Claude's live settings, per turn |
 
 ## The idea in one line
 
 **Mirror Claude, don't reinvent it.** Dragoman reads Claude Code's own settings and mirrors
 them onto Codex per turn. It only asks you a question when Claude's own policy can't answer — and when it
 does, it uses Claude's native approval prompt.
-
-## Status
-
-**WIP, but the mirror is feature-complete.** The mappings below are implemented,
-unit-tested, and locked by live integration tests against real Codex. It installs as
-a native Claude Code **plugin** — a `/dragoman:codex` skill and a
-`dragoman:codex-agent` subagent so Claude reaches for it naturally. One Claude
-setting can't map faithfully — it's called out in
-[`docs/MAPPING.md`](docs/MAPPING.md), alongside the full mapping; the design and
-ethos are in [`docs/DESIGN.md`](docs/DESIGN.md).
 
 ## What's mapped
 
