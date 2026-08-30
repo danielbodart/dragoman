@@ -2,11 +2,11 @@
 
 _Status: the foundation, the production `diagnostics` probe, all three lifecycle
 tools (`codex_cancel`, `codex_steer`, `codex_continue`), the unified event-log
-substrate, and the Codex→agent back-channel (mid-run `agentMessage`s as events) have
-landed — wired into the MCP surface and covered by `test/lifecycle.test.ts` /
-`test/pump.test.ts`. Still open: verifying the `codex-agent` messaging relay
-end-to-end in a live run, and prototyping `codex_review`. `codex_diff` was dropped
-(see Secondary tools)._
+substrate, the Codex→agent back-channel (mid-run `agentMessage`s as events), and
+`codex_review` (Codex's dedicated review pass) have landed — wired into the MCP surface
+and covered by `test/lifecycle.test.ts` / `test/pump.test.ts`. Still open: verifying the
+`codex-agent` messaging relay end-to-end in a live run. `codex_diff` was dropped (see
+Secondary tools)._
 
 ## Why
 
@@ -196,16 +196,31 @@ agent — not a local workaround. Noted as the durable path, not pursued now.
 
 ## Secondary tools
 
-### `codex_review(target)` → `review/start` — worth prototyping
+### `codex_review` → `review/start` — LANDED
 
-Codex's *first-class* review mode: structured findings against a `ReviewTarget`
-(`uncommittedChanges` | `baseBranch` | `commit` | `custom`), delivered inline or on a
-detached thread. The `codex-agent` already "reviews" via a freeform prompt; this yields
-structured output instead. This is the one secondary tool worth building — a review is
-plausibly where Codex brings *distinct* value (a genuine outside read with structured
-output), not just a second way to do what the freeform path already does. Approach:
-**prototype it and judge the output** before committing to a tool shape — it could ship
-as a `codex_run` target variant rather than a standalone tool.
+Codex's *first-class* review pass over a `ReviewTarget` (`uncommittedChanges` |
+`baseBranch` | `commit` | `custom`). Prototyped live before building (a temp repo with a
+planted off-by-one), which settled two things:
+
+- **The output is a convention, not a schema.** There is no review-finding type in the
+  protocol; a review runs a review-mode turn (`enteredReviewMode` → git → `exitedReviewMode`
+  → final `agentMessage`) and returns **prioritized, file:line-anchored markdown**:
+  `- [P1] <title> — <file>:<lines>` bullets with an explanation. "Structured" in the
+  sense of a consistent priority + location convention, parseable if we ever want inline
+  comments — not JSON.
+- **It earns its keep over a freeform prompt.** Structural target selection (no "review
+  the uncommitted changes" prompting — it computes the diff itself), a tuned review
+  harness, and the consistent `[Pn]`/location convention all come for free. It
+  *prioritizes* rather than exhaustively enumerates (found the P1, ranked over a minor
+  issue) — the right shape for a review.
+
+Built as a thin sibling of `codex_run`: `ThreadRuns.review` = provision + mirror +
+`thread/start` + `review/start` (via `kickReview`), returning a handle you poll with
+`codex_status`; findings surface as the run's `result`. Delivery is **inline** (not
+detached): per-run spawn already gives the review its own fresh thread, so there's
+nothing to keep it off, and inline keeps notifications on our handle where the pump
+routes them. Tool params: `cwd` (required), `against` (base ref → `baseBranch`),
+`instructions` (→ `custom`), else `uncommittedChanges`. Covered in `test/lifecycle.test.ts`.
 
 ### `codex_diff` → `gitDiffToRemote` — DROPPED
 
@@ -240,8 +255,8 @@ surface does. Changes made:
    message into `codex_steer`/`codex_cancel`, relay Codex's own `message` events back).
    OPEN: verify end-to-end in a live run that a mid-run `SendMessage` actually reaches
    the subagent between polls — no code expected, just the empirical check.
-8. **Secondary — `codex_review` only.** Prototype `review/start` and judge its output;
-   `codex_diff` dropped (Claude runs `git diff` itself). OPEN.
+8. **Secondary — `codex_review`.** DONE (prototyped, then built as a thin `codex_run`
+   sibling). `codex_diff` dropped (Claude runs `git diff` itself).
 
 The landed tools sit behind the existing `FakeAppServer` unit seam
 (`test/lifecycle.test.ts`, `test/pump.test.ts`); a ratcheted live integration test for

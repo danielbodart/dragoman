@@ -35,6 +35,8 @@ and permissions straight onto Claude Code's own machinery:
 | Approvals | hang — must disable the sandbox | native async prompt, in Claude's own UI |
 | Progress | one final blob | live heartbeat you can poll |
 | Permissions, mode & sandbox | not mapped | mirror Claude's live settings, per turn |
+| Course-correcting a run | can't — wait out the batch job | steer it mid-flight, or stop it, without a restart |
+| Follow-ups | every task starts cold | continue on the same thread, keeping its context |
 
 ## The idea in one line
 
@@ -101,7 +103,8 @@ Once installed you get:
   rather drive Codex directly — **`codex_run`** to start a task and **`codex_status`**
   to follow it, plus the lifecycle tools **`codex_steer`** (nudge a running task),
   **`codex_cancel`** (stop one), and **`codex_continue`** (follow up on a finished
-  task, on the same thread), and **`diagnostics`** for the live run + mirror view.
+  task, on the same thread); **`codex_review`** for Codex's dedicated, prioritized
+  code-review pass over a diff; and **`diagnostics`** for the live run + mirror view.
 
 ### From source
 

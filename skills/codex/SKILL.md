@@ -28,7 +28,11 @@ That independence is the point: use it when a genuinely separate agent adds valu
 - **Second implementation.** You want the same task built a different way, to
   compare — or you're stuck and want a fresh attempt.
 - **Independent review / second opinion.** Codex reviews a diff or design with no
-  knowledge of how you arrived at it — a real outside read, not an echo.
+  knowledge of how you arrived at it — a real outside read, not an echo. For a code
+  review specifically, use **`codex_review({ cwd })`** — Codex's dedicated review pass:
+  it computes the diff itself and returns a prioritized, file:line-anchored review
+  (P1/P2/… findings). Defaults to the uncommitted changes; pass `against` (a base
+  branch/ref) or `instructions` (a custom focus). Poll `codex_status` for the findings.
 - **Deep investigation.** A gnarly root-cause hunt worth running in parallel while
   you keep working.
 - **Offload.** A well-specified, self-contained job you can delegate and collect.

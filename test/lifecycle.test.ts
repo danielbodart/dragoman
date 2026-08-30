@@ -150,3 +150,35 @@ describe("codex_continue", () => {
     expect(await runs.continueRun("nope", "next")).toContain('No Codex task with handle "nope"');
   });
 });
+
+describe("codex_review", () => {
+  test("starts a review turn on a fresh thread with the given target (inline)", async () => {
+    const { runs, conns } = lab();
+    const conn = makeConn("t1");
+    conn.results["review/start"] = [{ turn: { id: "rev1" }, reviewThreadId: "t1" }];
+    conns.push(conn);
+    const handle = await runs.review("/repo", { type: "uncommittedChanges" });
+    expect(handle).toBe("t1");
+    await Bun.sleep(1);
+
+    expect(conn.requests.some((r) => r.method === "thread/start")).toBe(true);
+    expect(conn.requests.find((r) => r.method === "review/start")?.params).toEqual({
+      threadId: "t1",
+      target: { type: "uncommittedChanges" },
+      delivery: "inline",
+    });
+    expect(runs.status(handle)?.turnId).toBe("rev1");
+  });
+
+  test("the review's findings surface through the event log as the result", async () => {
+    const { runs, conns } = lab();
+    const conn = makeConn("t1");
+    conn.results["review/start"] = [{ turn: { id: "rev1" }, reviewThreadId: "t1" }];
+    conns.push(conn);
+    const handle = await runs.review("/repo", { type: "baseBranch", branch: "main" });
+    conn.emit(turnCompleted("t1"));
+    await Bun.sleep(1);
+    expect(runs.status(handle)?.status).toBe("done");
+    expect(runs.drain(handle).find((e) => e.kind === "result")?.text).toBe("all done");
+  });
+});

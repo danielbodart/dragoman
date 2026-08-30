@@ -25,6 +25,8 @@ import type { ThreadStartResponse } from "../generated/codex-protocol/ts/v2/Thre
 import type { ThreadResumeResponse } from "../generated/codex-protocol/ts/v2/ThreadResumeResponse.ts";
 import type { TurnStartResponse } from "../generated/codex-protocol/ts/v2/TurnStartResponse.ts";
 import type { TurnSteerResponse } from "../generated/codex-protocol/ts/v2/TurnSteerResponse.ts";
+import type { ReviewStartResponse } from "../generated/codex-protocol/ts/v2/ReviewStartResponse.ts";
+import type { ReviewTarget } from "../generated/codex-protocol/ts/v2/ReviewTarget.ts";
 
 /** A read-only snapshot of a run, as `codex_status` returns it. */
 export type RunSnapshot = Readonly<RunRecord>;
@@ -110,6 +112,29 @@ export class ThreadRuns {
     // Kick the opening turn off in the background — `thread.model`/`reasoningEffort`
     // feed the native-plan collaboration mode (see `kickTurn`).
     this.kickTurn(handle, conn, policy, prompt, thread.model, thread.reasoningEffort);
+    return handle;
+  }
+
+  /**
+   * Start a Codex code review and return its handle without waiting (the
+   * `codex_review` tool).
+   *
+   * Codex's dedicated review pass over a diff `target` — it computes the diff
+   * itself and returns a prioritized, file:line-anchored review. Provisioned exactly
+   * like a run (fresh mirror of Claude's live posture), then `review/start` replaces
+   * `turn/start`. Delivery is `inline`, NOT detached: per-run spawn already gives this
+   * review its own fresh thread, so there is nothing to keep it off — and inline keeps
+   * the review turn on our handle, where the pump routes its notifications. The
+   * findings then surface through `codex_status` like any other result.
+   */
+  async review(cwd: string, target: ReviewTarget, posture?: string): Promise<RunHandle> {
+    const { settings, policy, provisioned, conn } = await this.provisionMirror(posture);
+    const params = this.mirrorParams(policy, settings, cwd) as ThreadStartParams;
+    const thread = (await conn.request("thread/start", params)) as ThreadStartResponse;
+    const handle = thread.thread.id;
+
+    this.register(handle, cwd, policy, provisioned);
+    this.kickReview(handle, conn, target);
     return handle;
   }
 
@@ -302,6 +327,31 @@ export class ThreadRuns {
       })
       .catch((error: unknown) => {
         this.fail(handle, `failed to start turn: ${(error as Error).message}`);
+      });
+  }
+
+  /**
+   * Kick a review off in the background — the review analogue of `kickTurn`. Fires
+   * `review/start` (which runs a review-mode turn on this thread) and, like the turn
+   * path, records the active turn id from the reply and never throws: a failure to
+   * even start the review is recorded on the run, since `review` already returned a
+   * handle. Delivery is `inline` so the review's notifications carry our handle.
+   */
+  private kickReview(handle: RunHandle, conn: AppServerConn, target: ReviewTarget): void {
+    void conn
+      .request("review/start", { threadId: handle, target, delivery: "inline" })
+      .then((response) => {
+        const turn = (response as ReviewStartResponse).turn;
+        const run = this.runs.get(handle);
+        if (run) {
+          if (run.status === "starting") run.status = "running";
+          run.turnId = turn.id;
+        }
+        this.bump(handle);
+        return turn;
+      })
+      .catch((error: unknown) => {
+        this.fail(handle, `failed to start review: ${(error as Error).message}`);
       });
   }
 

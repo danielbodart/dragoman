@@ -16,6 +16,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { diagnostics } from "./diagnostics.ts";
 import type { ThreadRuns } from "./thread-run.ts";
+import type { ReviewTarget } from "../generated/codex-protocol/ts/v2/ReviewTarget.ts";
 import { version } from "./version.ts";
 
 /**
@@ -47,6 +48,8 @@ export function buildServer(runs: ThreadRuns): Server {
         return text(await cancelCodex(runs, args ?? {}));
       case "codex_continue":
         return text(await continueCodex(runs, args ?? {}));
+      case "codex_review":
+        return text(await reviewCodex(runs, args ?? {}));
       case "diagnostics":
         return text(diagnostics(runs));
       default:
@@ -152,6 +155,36 @@ const TOOLS = [
     },
   },
   {
+    name: "codex_review",
+    description:
+      "Run Codex's dedicated code-review pass over a diff and return a handle immediately; poll codex_status for the findings. " +
+      "Codex computes the diff itself and returns a prioritized, file:line-anchored review (P1/P2/… findings) — its own first-class review, " +
+      "not a freeform prompt. By default reviews the UNCOMMITTED changes in `cwd`. Prefer this over codex_run for a code review.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        cwd: { type: "string", description: "Working directory of the repo to review (absolute path)." },
+        against: {
+          type: "string",
+          description:
+            "OPTIONAL base branch or ref to review the changes against (e.g. \"main\"). Omit to review the uncommitted changes.",
+        },
+        instructions: {
+          type: "string",
+          description:
+            "OPTIONAL custom review focus (e.g. \"focus on error handling and edge cases\"). When set, Codex runs a custom review with these instructions instead of a plain diff review.",
+        },
+        posture: {
+          type: "string",
+          enum: ["plan", "default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"],
+          description:
+            "OPTIONAL — normally OMIT. As with codex_run, Dragoman mirrors Claude's live posture; only pass a value when the user explicitly asks for a specific mode.",
+        },
+      },
+      required: ["cwd"],
+    },
+  },
+  {
     name: "codex_continue",
     description:
       "Continue a FINISHED Codex task with a follow-up, on the same thread — so Codex keeps everything it learned instead of starting cold. " +
@@ -204,6 +237,22 @@ async function continueCodex(runs: ThreadRuns, args: Record<string, unknown>): P
   const posture = typeof args.posture === "string" ? args.posture : undefined;
   if (!handle || !prompt) return "codex_continue needs both `handle` and `prompt`.";
   return runs.continueRun(handle, prompt, posture);
+}
+
+async function reviewCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<string> {
+  const cwd = String(args.cwd ?? "");
+  if (!cwd) return "codex_review needs a `cwd`.";
+  const posture = typeof args.posture === "string" ? args.posture : undefined;
+  const instructions = typeof args.instructions === "string" && args.instructions ? args.instructions : undefined;
+  const against = typeof args.against === "string" && args.against ? args.against : undefined;
+  // A custom focus wins; else diff against a named base; else the uncommitted changes.
+  const target: ReviewTarget = instructions
+    ? { type: "custom", instructions }
+    : against
+      ? { type: "baseBranch", branch: against }
+      : { type: "uncommittedChanges" };
+  const handle = await runs.review(cwd, target, posture);
+  return `Started Codex review. Poll codex_status with handle "${handle}".`;
 }
 
 /** How long a single codex_status call blocks waiting for progress, before it
