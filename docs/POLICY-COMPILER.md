@@ -374,11 +374,17 @@ derives the whole posture from Claude.
     allow-list" — empty patterns are rejected (no catch-all) and `not_match` is a
     load-time assertion, not runtime negation. Residual (documented limitation): a
     user on `false` still sees Codex's trusted commands (`ls`, `cat`) auto-run.
-- **Permissions requests** still fail-closed (their reply grants a profile, not a
-  yes/no) — wire them once the profile-grant shape is handled. Hard to verify: no
-  known way to trigger `item/permissions/requestApproval` deterministically yet, so
-  shipping a grant would be untested. Needs a repro path + a decision on whether an
-  approved grant is intersected with Claude's `deny` rules.
+- **Permissions requests** — ✅ wired through elicitation. When the agent asks to WIDEN
+  its sandbox (`item/permissions/requestApproval` — add network / filesystem reach for
+  the turn), the pump routes it to the human like the other approvals, showing the
+  reason and exactly what's requested; `accept` grants what was asked (turn scope),
+  anything else grants an empty profile (widens nothing). No intersection with Claude's
+  `deny` rules — the human sees the request and decides (this is about sensible
+  interactive mapping, not headless enforcement). `dontAsk`/`plan` refuse without
+  asking (they never run `granular`, so never raise one). Only fires under `granular`
+  (acceptEdits, or auto when the model reviewer defers). Handler logic is unit-tested
+  (`pump.test.ts`); a deterministic live trigger for it isn't known, but the
+  elicitation seam it rides is already verified.
 - **WebFetch cross-channel mapping** — ✅ resolved + verified. A `WebFetch(domain:x)`
   rule means "you may reach host x". Codex has no fetch tool, so the mirror honours it
   two ways at once: a network **allow** for x AND an implicit **`curl`/`wget`

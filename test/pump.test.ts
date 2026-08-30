@@ -334,6 +334,46 @@ describe("the approval bridge — the anti-hang property", () => {
     expect(elicitation.asks).toEqual([]);
   });
 
+  const permissionsReq = (threadId: string, permissions: unknown): ServerRequest => ({
+    method: "item/permissions/requestApproval",
+    id: 7,
+    params: { threadId, turnId: "turn1", itemId: "p1", environmentId: null, startedAtMs: 1000, cwd: "/repo", reason: "needs more room", permissions } as never,
+  });
+
+  test("a permissions request (widen the sandbox) is elicited; accept grants what was asked", async () => {
+    const { conn, elicitation, runs, threadId } = bridge();
+    await runs.start("go", "/repo");
+    const requested = { network: { enabled: true }, fileSystem: { read: null, write: ["/build"] } };
+    const reply = conn.emitServerRequest(permissionsReq(threadId, requested));
+    await Bun.sleep(1);
+    expect(elicitation.waiting).toBe(true);
+    expect(elicitation.asks[0]?.prompt).toContain("expand its permissions");
+    expect(elicitation.asks[0]?.prompt).toContain("network access");
+    expect(elicitation.asks[0]?.prompt).toContain("write: /build");
+    expect(runs.status(threadId)?.status).toBe("waiting-approval");
+
+    elicitation.answer("accept");
+    expect(await reply).toEqual({ permissions: { network: { enabled: true }, fileSystem: { read: null, write: ["/build"] } }, scope: "turn" });
+    expect(runs.status(threadId)?.status).toBe("running");
+  });
+
+  test("a permissions request: decline grants nothing (an empty profile widens nothing)", async () => {
+    const { conn, elicitation, runs, threadId } = bridge();
+    await runs.start("go", "/repo");
+    const reply = conn.emitServerRequest(permissionsReq(threadId, { network: { enabled: true }, fileSystem: null }));
+    await Bun.sleep(1);
+    elicitation.answer("decline");
+    expect(await reply).toEqual({ permissions: {}, scope: "turn" });
+  });
+
+  test("dontAsk: a permissions request is refused without asking the human", async () => {
+    const s = (): EffectiveSettings => ({ ...emptySettings(), defaultMode: "dontAsk" });
+    const { conn, elicitation, runs, threadId } = bridge("t1", s);
+    await runs.start("go", "/repo");
+    expect(await conn.emitServerRequest(permissionsReq(threadId, { network: { enabled: true }, fileSystem: null }))).toEqual({ permissions: {}, scope: "turn" });
+    expect(elicitation.asks).toEqual([]);
+  });
+
   test("acceptEdits: an ESCAPED file edit still asks the human (in-scope edits auto-run via the sandbox)", async () => {
     const s = (): EffectiveSettings => ({ ...emptySettings(), defaultMode: "acceptEdits" });
     const { conn, elicitation, runs, threadId } = bridge("t1", s);

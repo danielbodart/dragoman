@@ -28,6 +28,8 @@ import type { RunRecord } from "./model.ts";
 import type { ThreadRuns } from "./thread-run.ts";
 import type { CommandExecutionRequestApprovalParams } from "../generated/codex-protocol/ts/v2/CommandExecutionRequestApprovalParams.ts";
 import type { FileChangeRequestApprovalParams } from "../generated/codex-protocol/ts/v2/FileChangeRequestApprovalParams.ts";
+import type { PermissionsRequestApprovalParams } from "../generated/codex-protocol/ts/v2/PermissionsRequestApprovalParams.ts";
+import type { GrantedPermissionProfile } from "../generated/codex-protocol/ts/v2/GrantedPermissionProfile.ts";
 
 /**
  * Wire the pump onto a connection: register the approval handler and start the
@@ -59,7 +61,10 @@ export function startPump(
  *    `FileChangeApprovalDecision`'s valid "no").
  *  - `currentTime/read` → the real time; it's a host service, not an approval,
  *    trivial and safe to answer correctly.
- *  - everything else (permissions, tool-call/user-input, mcp elicitation
+ *  - `item/permissions/requestApproval` → the agent asking to WIDEN its sandbox
+ *    (add network / filesystem reach) for the rest of the turn; routed to the human
+ *    via elicitation like the other approvals.
+ *  - everything else (tool-call/user-input, mcp elicitation
  *    passthrough, auth/attestation host services, legacy approval methods) →
  *    THROW, so the transport sends a well-formed JSON-RPC error frame. An error
  *    is a valid response the server can act on; a wrong-shaped `result` is not.
@@ -76,6 +81,8 @@ async function handleServerRequest(
       return handleCommandApproval(request.params, runs, elicitation);
     case "item/fileChange/requestApproval":
       return handleFileChangeApproval(request.params, runs, elicitation);
+    case "item/permissions/requestApproval":
+      return handlePermissionsApproval(request.params, runs, elicitation);
     case "currentTime/read":
       return { currentTimeAt: Math.floor(Date.now() / 1000) };
     default:
@@ -153,6 +160,59 @@ async function handleFileChangeApproval(
   });
   if (run && run.status === "waiting-approval") run.status = "running";
   return { decision };
+}
+
+/**
+ * Permissions request: the agent asks to WIDEN its sandbox — add network access or
+ * filesystem paths for the rest of the turn — not to run one action, but for a
+ * standing capability. Route it straight to the human via elicitation, showing the
+ * reason and exactly what's requested; `accept` grants what was asked (turn scope),
+ * anything else grants nothing (an empty profile widens nothing). No intersection with
+ * Claude's own rules — the human sees the request and decides. The mode's
+ * decline-fallback (`dontAsk`/`plan`) refuses without asking; those modes don't run
+ * `granular`, so they never actually raise one, but this keeps the never-prompt
+ * contract. Only fires under `granular` (acceptEdits, or auto when the model reviewer
+ * defers to the user).
+ */
+async function handlePermissionsApproval(
+  params: PermissionsRequestApprovalParams,
+  runs: ThreadRuns,
+  elicitation: ElicitationChannel,
+): Promise<unknown> {
+  const run = runs.record(params.threadId);
+  if (run?.commandFallback === "decline") return denyPermissions();
+
+  if (run) {
+    run.status = "waiting-approval";
+    runs.bump(params.threadId);
+  }
+  const decision = await elicitation.ask({ prompt: permissionsPromptFor(params), decisions: ["accept", "decline"] });
+  if (run && run.status === "waiting-approval") run.status = "running";
+
+  if (decision !== "accept") return denyPermissions();
+  const requested = params.permissions;
+  const granted: GrantedPermissionProfile = {};
+  if (requested.network) granted.network = requested.network;
+  if (requested.fileSystem) granted.fileSystem = requested.fileSystem;
+  return { permissions: granted, scope: "turn" };
+}
+
+/** The deny for a capability request: grant an empty profile (widens nothing). */
+function denyPermissions(): unknown {
+  return { permissions: {}, scope: "turn" };
+}
+
+/** A human-readable summary of the reach the agent is asking to be granted. */
+function permissionsPromptFor(params: PermissionsRequestApprovalParams): string {
+  const wants: string[] = [];
+  if (params.permissions.network?.enabled) wants.push("network access");
+  const fs = params.permissions.fileSystem;
+  if (fs?.write?.length) wants.push(`write: ${fs.write.join(", ")}`);
+  if (fs?.read?.length) wants.push(`read: ${fs.read.join(", ")}`);
+  if (fs?.entries?.length) wants.push(`${fs.entries.length} path rule(s)`);
+  const what = wants.length > 0 ? wants.join("; ") : "expanded permissions";
+  const reason = params.reason ? ` — ${params.reason}` : "";
+  return `Codex wants to expand its permissions in \`${params.cwd}\`${reason}: ${what}`;
 }
 
 /** Return the matching non-empty command-token prefix, if any. */
