@@ -1,25 +1,92 @@
 [tools]
 bun = "1.3"
 
+# mise owns the dependency graph. The `run` sugar delegates here for everything
+# except `version`; CI and local dev both go through these tasks, so the two
+# stay in lockstep. Tasks are plain shell where they can be; the two that need
+# real TypeScript are their own scripts (`scripts/version.ts`,
+# `scripts/package.ts`).
+
 [tasks.install]
 run = "bun install --frozen-lockfile"
 
 [tasks.check]
 depends = ["install"]
-run = "bun run.ts check"
+run = "bunx tsc --noEmit"
 
 [tasks.test]
 depends = ["install"]
-run = "bun run.ts test"
+run = "bun test"
 
+# The version reaches the binary as a build-time define rather than a generated
+# file, so nothing is written into src/ that would then show up as a change.
+# src/version.ts falls back when the define is absent, which is what happens
+# under `bun run src/main.ts`.
 [tasks.build]
 depends = ["check"]
-run = "bun run.ts build"
+run = '''
+v="$(bun scripts/version.ts)"
+bun build --compile --minify --sourcemap --define "DRAGOMAN_VERSION=\"$v\"" src/main.ts --outfile dist/dragoman
+echo "built dist/dragoman $v"
+'''
 
 [tasks.package]
 depends = ["install"]
-run = "bun run.ts package"
+run = "bun scripts/package.ts"
 
+# Regenerate the committed Codex app-server protocol bindings from the installed
+# `codex` CLI (a dev-only task; CI never runs it). Rerun after a codex upgrade;
+# the resulting `git diff` is the protocol change. See
+# generated/codex-protocol/README.md for the pinned version.
+[tasks.regen-protocol]
+run = '''
+codex app-server generate-ts --out generated/codex-protocol/ts --experimental
+codex app-server generate-json-schema --out generated/codex-protocol/schema --experimental
+echo "regenerated generated/codex-protocol from $(codex --version)"
+'''
+
+# The whole validation pipeline - what every push and PR runs. GitHub Actions
+# calls exactly this, so `mise run ci` locally does the same work.
+[tasks.ci]
+depends = ["check", "test", "package"]
+
+# Publish the release: cut the GitHub release and repoint the marketplace at it.
+# Consumes the artifacts `package` already staged under dist/ (run `mise run ci`
+# or `mise run package` first). Invoked only from Actions on push-to-main; needs
+# GITHUB_TOKEN in the environment for both `gh` and the marketplace push.
 [tasks.release]
-depends = ["check", "test", "build"]
-run = "bun run.ts build"
+run = '''
+set -euo pipefail
+v="$(bun scripts/version.ts)"
+sha="$(sha256sum dist/dragoman-plugin.zip | awk '{print $1}')"
+
+gh release create "v$v" \
+  --title "v$v" \
+  dist/dragoman-plugin.zip \
+  dist/plugin/bin/dragoman-darwin-arm64 \
+  dist/plugin/bin/dragoman-darwin-x64 \
+  dist/plugin/bin/dragoman-linux-x64 \
+  dist/plugin/bin/dragoman-linux-arm64
+
+# Point the marketplace catalog at the new release.
+export V="$v" SHA="$sha"
+bun -e '
+  const f = ".claude-plugin/marketplace.json";
+  const m = JSON.parse(await Bun.file(f).text());
+  const p = m.plugins.find((p) => p.name === "dragoman");
+  p.version = process.env.V;
+  p.source.url = `https://github.com/danielbodart/dragoman/releases/download/v${process.env.V}/dragoman-plugin.zip`;
+  p.source.sha256 = process.env.SHA;
+  await Bun.write(f, JSON.stringify(m, null, 2) + "\n");
+'
+if git diff --quiet .claude-plugin/marketplace.json; then
+  echo "marketplace.json already current"; exit 0
+fi
+git config user.name "github-actions[bot]"
+git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+git add .claude-plugin/marketplace.json
+git commit -m "release: point marketplace at v$V [skip ci]"
+# A concurrent push can win the race; the next release re-points, so a failed
+# push is a warning, not a build failure.
+git push origin HEAD:main || echo "::warning::marketplace pointer push raced; next release will re-point"
+'''

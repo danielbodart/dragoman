@@ -1,0 +1,23 @@
+#!/usr/bin/env bun
+import { version } from "./scripts/version.ts";
+
+/**
+ * `run` is pure syntactic sugar over mise: `run <task> [args…]`.
+ *
+ * `version` is the one task answered here - it is derived TypeScript, not a
+ * shell one-liner - and everything else is delegated straight to
+ * `mise run <task> [args…]`. mise owns the dependency graph and every real
+ * task (check, test, build, package, ci, release); this file is just a thin,
+ * memorable front door so any project can be driven with `run <thing>`.
+ */
+const [name, ...args] = process.argv.slice(2);
+
+if (name === "version") {
+  console.log(await version());
+} else {
+  // Default to `build` to preserve the old bare-invocation behaviour.
+  const proc = Bun.spawn(["mise", "run", name ?? "build", ...args], {
+    stdio: ["inherit", "inherit", "inherit"],
+  });
+  process.exit(await proc.exited);
+}

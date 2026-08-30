@@ -18,7 +18,7 @@ Last generated against **`codex-cli 0.150.1`**.
 After a `codex` upgrade, run:
 
 ```
-bun run.ts regen-protocol
+mise run regen-protocol
 ```
 
 which runs, under the hood:

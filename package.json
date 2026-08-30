@@ -7,9 +7,9 @@
   "private": true,
   "scripts": {
     "start": "bun run src/main.ts serve",
-    "check": "bun run.ts check",
-    "test": "bun run.ts test",
-    "build": "bun run.ts build"
+    "check": "mise run check",
+    "test": "mise run test",
+    "build": "mise run build"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.30.0"
