@@ -41,8 +41,14 @@ export function buildServer(runs: ThreadRuns): Server {
         return text(await runCodex(runs, args ?? {}));
       case "codex_status":
         return text(await statusCodex(runs, args ?? {}));
+      case "codex_steer":
+        return text(await steerCodex(runs, args ?? {}));
+      case "codex_cancel":
+        return text(await cancelCodex(runs, args ?? {}));
+      case "codex_continue":
+        return text(await continueCodex(runs, args ?? {}));
       case "diagnostics":
-        return text(diagnostics());
+        return text(diagnostics(runs));
       default:
         return text(`unknown tool: ${name}`, true);
     }
@@ -101,12 +107,13 @@ const TOOLS = [
     },
   },
   {
-    // TEMPORARY: reports what the MCP subprocess actually sees at runtime, to
-    // ground the settings-mirroring design in real data (cwd? which CLAUDE_*
-    // env? which settings files reachable?) rather than assumptions. Remove once
-    // the mirroring transport is settled.
+    // Dragoman's ground-truth observability probe: what the MCP subprocess
+    // actually sees (cwd, CLAUDE_* env, reachable settings, the mirror preview)
+    // AND what it is doing right now (live runs + their active turns). Permanent
+    // — the single operator view as the tool surface grows.
     name: "diagnostics",
-    description: "Diagnostic: report Dragoman's runtime environment (working directory, Claude Code env vars, reachable settings files). Used to design settings mirroring.",
+    description:
+      "Report Dragoman's runtime state: live Codex runs (status, active turn, latest milestone), the working directory, Claude Code env vars, reachable settings files, and the mirror preview (what those settings would apply to Codex per posture). Use it to see what a run is doing or why a mirror resolved as it did.",
     inputSchema: { type: "object", properties: {} },
   },
   {
@@ -116,6 +123,55 @@ const TOOLS = [
       type: "object",
       properties: { handle: { type: "string", description: "The handle codex_run returned." } },
       required: ["handle"],
+    },
+  },
+  {
+    name: "codex_steer",
+    description:
+      "Send guidance to a RUNNING Codex task without interrupting it — the way you'd type a message while an agent works. " +
+      "Use it to nudge, add a constraint, or redirect focus mid-turn (e.g. 'also check the Windows path'). " +
+      "The task keeps its context and carries on; poll codex_status to see the steer take effect.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string", description: "The handle codex_run returned." },
+        text: { type: "string", description: "The guidance to inject into the running turn." },
+      },
+      required: ["handle", "text"],
+    },
+  },
+  {
+    name: "codex_cancel",
+    description:
+      "Stop a RUNNING Codex task — the equivalent of pressing Esc. Use it when the task has gone off the rails or is no longer needed. " +
+      "Returns immediately; poll codex_status to confirm it stopped. To redirect rather than stop, prefer codex_steer.",
+    inputSchema: {
+      type: "object",
+      properties: { handle: { type: "string", description: "The handle codex_run returned." } },
+      required: ["handle"],
+    },
+  },
+  {
+    name: "codex_continue",
+    description:
+      "Continue a FINISHED Codex task with a follow-up, on the same thread — so Codex keeps everything it learned instead of starting cold. " +
+      "Use it for the natural next step ('now update the tests', 'also handle the empty case'). " +
+      "The follow-up re-reads your CURRENT permission mode and settings, so it runs under the access you have now. " +
+      "Reuses the original handle; poll codex_status with it as usual. (For a task still running, use codex_steer.)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        handle: { type: "string", description: "The handle of the finished task to continue." },
+        prompt: { type: "string", description: "The follow-up for Codex to do next on the same thread." },
+        posture: {
+          type: "string",
+          enum: ["plan", "default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"],
+          description:
+            "OPTIONAL — normally OMIT. As with codex_run, Dragoman mirrors Claude's live posture onto the continuation by default; " +
+            "only pass a value when the user explicitly asks for a specific mode.",
+        },
+      },
+      required: ["handle", "prompt"],
     },
   },
 ] as const;
@@ -129,6 +185,27 @@ async function runCodex(runs: ThreadRuns, args: Record<string, unknown>): Promis
   return `Started Codex task. Poll codex_status with handle "${handle}".`;
 }
 
+async function steerCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<string> {
+  const handle = String(args.handle ?? "");
+  const text = String(args.text ?? "");
+  if (!handle || !text) return "codex_steer needs both `handle` and `text`.";
+  return runs.steer(handle, text);
+}
+
+async function cancelCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<string> {
+  const handle = String(args.handle ?? "");
+  if (!handle) return "codex_cancel needs a `handle`.";
+  return runs.cancel(handle);
+}
+
+async function continueCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<string> {
+  const handle = String(args.handle ?? "");
+  const prompt = String(args.prompt ?? "");
+  const posture = typeof args.posture === "string" ? args.posture : undefined;
+  if (!handle || !prompt) return "codex_continue needs both `handle` and `prompt`.";
+  return runs.continueRun(handle, prompt, posture);
+}
+
 /** How long a single codex_status call blocks waiting for progress, before it
  * returns "still running" so the caller can poll again — kept under Claude Code's
  * ~120s tool-call ceiling. */
@@ -140,11 +217,11 @@ async function statusCodex(runs: ThreadRuns, args: Record<string, unknown>): Pro
 
   // Long-poll unless there is already something undelivered: block until the run
   // advances past its current revision (or is terminal), so this returns the
-  // instant Codex makes progress rather than on a fixed interval. If milestones
-  // are already buffered we skip the wait and hand them over now — never leaving a
-  // beat sitting until the next bump. Times out to a "still running" line the
-  // caller re-polls, staying under the tool-call ceiling.
-  if (!runs.hasPendingBeats(handle)) {
+  // instant Codex makes progress rather than on a fixed interval. If events are
+  // already buffered we skip the wait and hand them over now — never leaving one
+  // sitting until the next bump. Times out to a "still running" line the caller
+  // re-polls, staying under the tool-call ceiling.
+  if (!runs.hasPending(handle)) {
     const since = runs.revision(handle);
     await runs.waitForUpdate(handle, since, STATUS_LONGPOLL_MS);
   }
@@ -152,31 +229,36 @@ async function statusCodex(runs: ThreadRuns, args: Record<string, unknown>): Pro
   const run = runs.status(handle);
   if (!run) return `No Codex task with handle "${handle}".`;
 
-  // Drain the milestone sequence — each beat delivered exactly once, in order.
-  const beats = runs.drainBeats(handle);
+  // Drain the one timeline — every event (progress, approval, terminal outcome),
+  // whatever its source, delivered exactly once, in order.
+  const events = runs.drain(handle);
   switch (run.status) {
     case "starting":
     case "running":
-      return runningLine("Running", beats);
+      return line("Running", events, "—");
     case "waiting-approval":
-      return runningLine("Waiting for your approval", beats);
+      return line("Waiting for your approval", events, "—");
     case "done":
-      return `Done. ${run.result ?? "(no result text)"}`;
+      return line("Done", events, ".");
     case "error":
-      return `Errored: ${run.error ?? "unknown error"}.`;
+      return line("Errored", events, ".");
   }
 }
 
 /**
- * Render an in-flight status with the milestones drained this poll. No new beat →
- * the bare state line (nothing has advanced). One → the compact `Prefix — beat.`
- * form. Several (they piled up between polls) → the prefix over a bulleted list,
- * oldest first, so a superseded milestone like an auto-approval is still seen.
+ * Render a status from the events drained this poll — the same shape whatever the
+ * state, because they all come off one timeline. Nothing drained → the bare state
+ * line (either nothing advanced, or a terminal outcome already delivered on an
+ * earlier poll). One event → the compact `Prefix<join> text` form (`—` for in-flight
+ * progress, `.` for a terminal outcome). Several (they piled up between polls) → the
+ * prefix over a bulleted list, oldest first, so a superseded event is still seen.
  */
-function runningLine(prefix: string, beats: readonly { text: string }[]): string {
-  if (beats.length === 0) return `${prefix}.`;
-  if (beats.length === 1) return `${prefix} — ${beats[0]!.text}.`;
-  return `${prefix}:\n${beats.map((b) => `  • ${b.text}`).join("\n")}`;
+function line(prefix: string, events: readonly { text: string }[], join: "—" | "."): string {
+  if (events.length === 0) return `${prefix}.`;
+  if (events.length === 1) {
+    return join === "—" ? `${prefix} — ${events[0]!.text}.` : `${prefix}. ${events[0]!.text}`;
+  }
+  return `${prefix}:\n${events.map((e) => `  • ${e.text}`).join("\n")}`;
 }
 
 /** Wrap a string as an MCP tool result. */

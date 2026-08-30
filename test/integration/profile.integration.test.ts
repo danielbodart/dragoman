@@ -17,7 +17,7 @@ import { startPump } from "../../src/pump.ts";
 import { ThreadRuns } from "../../src/thread-run.ts";
 import type { EffectiveSettings } from "../../src/settings.ts";
 import { verifyOnce } from "./ratchet.ts";
-import { ScriptedElicitation, settings, settle, withTempDir } from "./harness.ts";
+import { resultText, ScriptedElicitation, settings, settle, withTempDir } from "./harness.ts";
 
 describe("profile route enforces per-host network through ThreadRuns", () => {
   verifyOnce("a denied domain is blocked; the isolated home carries the profile", async () => {
@@ -50,7 +50,7 @@ describe("profile route enforces per-host network through ThreadRuns", () => {
         // rejection varies by version (0.150.1: "rejected by the environment"), so
         // match the family, not one phrase — a non-zero curl rc / rejection, never a
         // 2xx. (This asserts the network table bit, independent of the mode.)
-        expect(final.result ?? "").toMatch(/blocked|denied|policy|rejected|environment|rc=[^0]/i);
+        expect(resultText(final)).toMatch(/blocked|denied|policy|rejected|environment|rc=[^0]/i);
       }),
     );
   });

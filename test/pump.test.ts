@@ -143,7 +143,7 @@ describe("codex_run / codex_status", () => {
     conn.emit({ emittedAtMs: 1500, method: "turn/started", params: { threadId, turn: { id: "turn1", items: [], itemsView: "complete", status: "inProgress", error: null, startedAt: null, completedAt: null, durationMs: null } as never } });
     // Give the notification loop a tick to fold the beat in.
     await Bun.sleep(1);
-    expect(runs.status(threadId)?.latestBeat?.text).toBe("starting turn");
+    expect(runs.status(threadId)?.events.at(-1)?.text).toBe("starting turn");
   });
 
   test("beats pile up between polls and drain in order — an auto-approval is not clobbered", async () => {
@@ -160,15 +160,15 @@ describe("codex_run / codex_status", () => {
 
     // The middle beat would be lost under a single overwritten slot; the drain
     // hands back all three, oldest first — the auto-approval survives.
-    expect(runs.hasPendingBeats(threadId)).toBe(true);
-    expect(runs.drainBeats(threadId).map((b) => b.text)).toEqual([
+    expect(runs.hasPending(threadId)).toBe(true);
+    expect(runs.drain(threadId).map((b) => b.text)).toEqual([
       'running: echo "hi"',
       'auto-approved (risk: low): echo "hi"',
       'ran: echo "hi"',
     ]);
     // Drained exactly once: a second poll has nothing left to deliver.
-    expect(runs.hasPendingBeats(threadId)).toBe(false);
-    expect(runs.drainBeats(threadId)).toEqual([]);
+    expect(runs.hasPending(threadId)).toBe(false);
+    expect(runs.drain(threadId)).toEqual([]);
   });
 });
 
@@ -283,7 +283,7 @@ describe("the approval bridge — the anti-hang property", () => {
     // the notification loop was never stalled by the unanswered request.
     conn.emit({ emittedAtMs: 1600, method: "item/started", params: { item: { type: "commandExecution", id: "c1", pluginId: null, scriptPath: null, command: "ls", cwd: "/repo", processId: null, source: "agent", status: "inProgress", commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null } as ThreadItem, threadId, turnId: "turn1", startedAtMs: 1600 } });
     await Bun.sleep(1);
-    expect(runs.status(threadId)?.latestBeat?.text).toBe("running: ls");
+    expect(runs.status(threadId)?.events.at(-1)?.text).toBe("running: ls");
 
     // The user answers; the decision flows back to Codex as the reply.
     elicitation.answer("acceptForSession");
@@ -303,7 +303,7 @@ describe("the approval bridge — the anti-hang property", () => {
 
     // A poll that only fires now — after the answer — still drains BOTH the waiting and
     // the outcome beats. The status snapshot alone would have lost the whole approval.
-    const beats = runs.drainBeats(threadId).map((b) => b.text);
+    const beats = runs.drain(threadId).map((b) => b.text);
     expect(beats).toContain("waiting for your approval: run `bash -lc 'python3 -c pass'`");
     expect(beats).toContain("you approved: run `bash -lc 'python3 -c pass'`");
   });
@@ -429,7 +429,7 @@ describe("the approval bridge — the anti-hang property", () => {
     conn.emit(turnCompleted(threadId, "all done"));
     await Bun.sleep(1);
     expect(runs.status(threadId)?.status).toBe("done");
-    expect(runs.status(threadId)?.result).toBe("all done");
+    expect(runs.drain(threadId).find((e) => e.kind === "result")?.text).toBe("all done");
   });
 });
 
@@ -463,7 +463,7 @@ describe("long-poll (waitForUpdate) — event-driven status", () => {
       params: { item: { type: "commandExecution", id: "c1", pluginId: null, scriptPath: null, command: "ls", cwd: "/repo", processId: null, source: "agent", status: "inProgress", commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null } as ThreadItem, threadId, turnId: "turn1", startedAtMs: 1600 },
     });
     const { snapshot } = await poll;
-    expect(snapshot?.latestBeat?.text).toBe("running: ls");
+    expect(snapshot?.events.at(-1)?.text).toBe("running: ls");
   });
 
   test("returns immediately when the run is already terminal", async () => {

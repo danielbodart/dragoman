@@ -54,6 +54,23 @@ Use the **tools directly** for a quick one-off you want to watch inline:
    approval prompt. Just answer it — Dragoman delivers your decision back to Codex
    out-of-band. (Allow/deny rules from your settings auto-answer; only the rest ask.)
 
+## Staying in control of a run
+
+A run isn't fire-and-forget — you can act on it the way you would your own work:
+
+- **Steer** — `codex_steer({ handle, text })` sends guidance to a **running** task
+  without stopping it (a new constraint, a correction, "focus on X, skip Y"). Codex
+  keeps its context and carries on; keep polling to watch it take effect. Reach for
+  this the moment Codex drifts — it beats cancelling and re-briefing.
+- **Cancel** — `codex_cancel({ handle })` stops a run that's gone off the rails or is
+  no longer needed. Poll `codex_status` to confirm it stopped. Prefer *steer* to
+  redirect rather than abandon.
+- **Continue** — after `Done.`, `codex_continue({ handle, prompt })` sends a follow-up
+  on the **same thread**, so Codex keeps everything it learned instead of starting
+  cold — the natural next step ("now write the tests", "also update the changelog").
+  Reuse the original handle; it re-mirrors your current posture, so the same
+  leave-`posture`-unset rule applies. (Still running? Steer, don't continue.)
+
 ## Writing the prompt
 
 Codex has none of your context. Give it everything: the full task, the files and

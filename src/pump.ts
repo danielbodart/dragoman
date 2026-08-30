@@ -91,37 +91,31 @@ async function handleServerRequest(
 }
 
 /**
- * Put a run into the waiting-for-human state AND append a lossless beat, so a pending
- * approval rides the same drained sequence as everything else and is NEVER lost at a
- * polling boundary. The bare `waiting-approval` *status* is a snapshot (latest wins),
- * so a fast answer flips it back to `running` before a coarse poll ever sees it — the
- * missed-feedback bug (a re-prompt because the caller never saw the first). Beats are
- * drained in order, so they can't be skipped — mirroring how auto-approvals ride the
- * feed. Returns the beat text so the resolution can echo the same subject.
+/**
+ * Put a run into the waiting-for-human state AND append a `progress` event, so a
+ * pending approval rides the same drained timeline as everything else and is NEVER
+ * lost at a polling boundary. The bare `waiting-approval` *status* is a snapshot
+ * (latest wins), so a fast answer flips it back to `running` before a coarse poll
+ * ever sees it — the missed-feedback bug (a re-prompt because the caller never saw
+ * the first). Events drain in order, so they can't be skipped — the same append the
+ * notification loop and the terminal outcome use.
  */
 function raiseApproval(runs: ThreadRuns, threadId: string, what: string): void {
   const run = runs.record(threadId);
   if (!run) return;
   run.status = "waiting-approval";
-  appendBeat(run, `waiting for your approval: ${what}`);
+  runs.append(threadId, { at: Date.now(), kind: "progress", text: `waiting for your approval: ${what}` });
   runs.bump(threadId);
 }
 
-/** Record the human's answer as a lossless beat and leave the waiting state. */
+/** Record the human's answer as an event and leave the waiting state. */
 function resolveApproval(runs: ThreadRuns, threadId: string, decision: string, what: string): void {
   const run = runs.record(threadId);
   if (!run) return;
   if (run.status === "waiting-approval") run.status = "running";
   const verb = decision === "accept" || decision === "acceptForSession" ? "you approved" : `you chose ${decision} for`;
-  appendBeat(run, `${verb}: ${what}`);
+  runs.append(threadId, { at: Date.now(), kind: "progress", text: `${verb}: ${what}` });
   runs.bump(threadId);
-}
-
-/** Append a beat the way the notification loop does: newest snapshot + lossless queue. */
-function appendBeat(run: RunRecord, text: string): void {
-  const beat = { at: Date.now(), text };
-  run.latestBeat = beat;
-  (run.pendingBeats ??= []).push(beat);
 }
 
 /** Command-execution approval: mirror allow-prefixes, then route the rest through the human. */
@@ -390,14 +384,29 @@ function apply(notification: Notification, runs: ThreadRuns): void {
   const run = runFor(notification, runs);
   if (!run) return;
 
+  const handle = run.handle;
+  const at = notification.emittedAtMs ?? Date.now();
   let changed = false;
-  const beat = beatOf(notification);
-  if (beat) {
-    run.latestBeat = beat;
-    // Append, don't overwrite: codex_status drains this in order, so a beat that
-    // is instantly superseded (an auto-approval between `running:` and `ran:`) is
-    // still delivered rather than clobbered at the polling boundary.
-    (run.pendingBeats ??= []).push(beat);
+
+  const terminal = notification.method === "turn/completed" || notification.method === "error";
+
+  // Progress milestones from the firehose become `progress` events — EXCEPT the
+  // terminal notifications, whose outcome is appended below as its own richer event
+  // (so beatOf's coarse "turn complete" doesn't duplicate the result line). Append,
+  // don't overwrite: codex_status drains in order, so a beat instantly superseded
+  // (an auto-approval between `running:` and `ran:`) is still delivered.
+  if (!terminal) {
+    const beat = beatOf(notification);
+    if (beat) {
+      runs.append(handle, { at: beat.at, kind: "progress", text: beat.text });
+      changed = true;
+    }
+  }
+
+  if (notification.method === "turn/started") {
+    // Track the live turn id (fresh on each turn, incl. continuation turns) so a
+    // cancel/steer always names the currently-active turn.
+    run.turnId = notification.params.turn.id;
     changed = true;
   }
 
@@ -405,20 +414,23 @@ function apply(notification: Notification, runs: ThreadRuns): void {
     const turn = notification.params.turn;
     if (turn.status === "failed") {
       run.status = "error";
-      run.error = turn.error?.message ?? "turn failed";
+      runs.append(handle, { at, kind: "error", text: turn.error?.message ?? "turn failed" });
     } else {
+      // `completed` or `interrupted` (a cancel) both settle the run; the final
+      // assistant message, if any, is the outcome event.
       run.status = "done";
-      run.result = lastAgentMessage(turn) ?? run.result;
+      const result = lastAgentMessage(turn);
+      if (result) runs.append(handle, { at, kind: "result", text: result });
     }
     changed = true;
   } else if (notification.method === "error") {
     run.status = "error";
-    run.error = notification.params.error.message;
+    runs.append(handle, { at, kind: "error", text: notification.params.error.message });
     changed = true;
   }
 
   // Wake any long-poll waiting on this run — the write itself is the signal.
-  if (changed) runs.bump(run.handle);
+  if (changed) runs.bump(handle);
 }
 
 /**

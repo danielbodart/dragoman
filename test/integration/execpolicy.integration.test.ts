@@ -16,7 +16,7 @@ import { describe, expect } from "bun:test";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { verifyOnce } from "./ratchet.ts";
-import { profiledRuns, ScriptedElicitation, settings, settle, withTempDir } from "./harness.ts";
+import { profiledRuns, resultText, ScriptedElicitation, settings, settle, withTempDir } from "./harness.ts";
 
 describe("execpolicy rules bind on the production path", () => {
   verifyOnce("a deny rule forbids the command even in bypassPermissions (never)", async () => {
@@ -46,7 +46,7 @@ describe("execpolicy rules bind on the production path", () => {
         const final = await settle(runs, handle);
         expect(final.status).toBe("done");
         expect(elicitation.asks.length).toBe(0); // allow rule pre-approved it: the human was never asked
-        expect(final.result ?? "").toContain("PLUM-8842");
+        expect(resultText(final)).toContain("PLUM-8842");
       }),
     );
   });

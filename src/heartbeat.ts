@@ -40,7 +40,7 @@ export function beatOf(notification: Notification): Beat | undefined {
     case "item/completed":
       return itemBeat(notification.params.item, "done", at);
     case "turn/completed":
-      return { at, text: notification.params.turn.status === "failed" ? "turn failed" : "turn complete" };
+      return { at, text: turnCompletionText(notification.params.turn.status) };
     case "item/autoApprovalReview/completed":
       return approvalBeat(notification.params, at);
     case "error":
@@ -48,6 +48,14 @@ export function beatOf(notification: Notification): Beat | undefined {
     default:
       return undefined;
   }
+}
+
+/** The milestone text for a turn reaching a terminal status: failed, cancelled
+ * (an interrupt landed), or a clean completion. */
+function turnCompletionText(status: string): string {
+  if (status === "failed") return "turn failed";
+  if (status === "interrupted") return "turn cancelled";
+  return "turn complete";
 }
 
 /**

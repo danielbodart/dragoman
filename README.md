@@ -89,8 +89,11 @@ Once installed you get:
 - the **`dragoman:codex-agent` subagent** — Claude delegates to it for a second
   implementation, an independent review, or a deep investigation; it drives the
   run, follows the heartbeat, and reports back in Codex's voice.
-- the underlying **`codex_run` / `codex_status`** MCP tools (exposed as
-  `mcp__plugin_dragoman_bridge__…`), if you'd rather drive Codex directly.
+- the underlying MCP tools (exposed as `mcp__plugin_dragoman_bridge__…`), if you'd
+  rather drive Codex directly — **`codex_run`** to start a task and **`codex_status`**
+  to follow it, plus the lifecycle tools **`codex_steer`** (nudge a running task),
+  **`codex_cancel`** (stop one), and **`codex_continue`** (follow up on a finished
+  task, on the same thread), and **`diagnostics`** for the live run + mirror view.
 
 ### From source
 

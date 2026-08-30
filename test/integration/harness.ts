@@ -138,6 +138,17 @@ export async function settle(runs: ThreadRuns, handle: string, timeoutMs = 120_0
   }
 }
 
+/** The terminal outcome text of a settled run: the last result/error event on its
+ * timeline. (`settle` polls `runs.status`, which never drains, so the event is still
+ * there.) Replaces the old `.result`/`.error` fields the unified event log folded in. */
+export function resultText(snapshot: RunSnapshot): string {
+  for (let i = snapshot.events.length - 1; i >= 0; i--) {
+    const event = snapshot.events[i]!;
+    if (event.kind === "result" || event.kind === "error") return event.text;
+  }
+  return "";
+}
+
 /** Effective settings with empty defaults, overridable field by field. */
 export function settings(overrides: Partial<EffectiveSettings> = {}): EffectiveSettings {
   return {

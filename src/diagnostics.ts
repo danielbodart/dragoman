@@ -1,11 +1,14 @@
 /**
- * TEMPORARY runtime probe for designing settings mirroring.
+ * Dragoman's runtime observability probe — a permanent operator tool.
  *
- * When Claude Code launches Dragoman as a stdio MCP server, WHAT does the
- * subprocess actually see? The docs say `CLAUDE_PROJECT_DIR` is the stable
- * project root and that cwd depends on how the server is registered — but that
- * has to be checked against reality, not trusted. This tool reports the ground
- * truth from inside a real MCP invocation. Delete once mirroring is settled.
+ * It answers, from inside a real MCP invocation, two questions no log line
+ * outside the subprocess can: WHAT does the bridge actually see (cwd, which
+ * `CLAUDE_*` env, which settings files are reachable, and what those settings
+ * would mirror onto Codex for each posture), and WHAT is it doing right now
+ * (the live runs, their status, active turn, and latest milestone). The first
+ * half diagnoses a mirror that fired wrong; the second diagnoses a run that is
+ * stuck, waiting, or unaccounted for. As the tool surface grows past
+ * `codex_run`/`codex_status`, this stays the single ground-truth view.
  *
  * It deliberately reports settings-file *presence* and their permission/sandbox
  * KEYS, never full file contents, so nothing sensitive lands in the transcript.
@@ -15,11 +18,21 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { mirror, resolveMode } from "./mirror.ts";
 import { readSettings } from "./settings.ts";
+import type { ThreadRuns } from "./thread-run.ts";
+import { version } from "./version.ts";
 
-export function diagnostics(): string {
+/**
+ * Render the probe. `runs` is optional so the pure env/mirror halves still work
+ * without a registry (e.g. a smoke test); when present, the live-runs section is
+ * appended so an operator can see every in-flight Codex run and its active turn.
+ */
+export function diagnostics(runs?: ThreadRuns): string {
   const lines: string[] = [];
 
-  lines.push("=== Dragoman runtime diagnostics ===\n");
+  lines.push(`=== Dragoman ${version} runtime diagnostics ===\n`);
+
+  lines.push(activeRuns(runs));
+  lines.push("");
 
   lines.push("process.cwd(): " + process.cwd());
   lines.push("");
@@ -95,6 +108,32 @@ export function diagnostics(): string {
     }
   }
 
+  return lines.join("\n");
+}
+
+/**
+ * The live-runs section: every in-flight (and recently-settled) run the registry
+ * still holds, with the two identifiers a cancel/steer/continue needs (handle =
+ * thread id, plus the active turn id) and the newest milestone. This is the
+ * operational half — "is anything stuck / waiting / unaccounted for right now" —
+ * that the env/mirror halves can't show. No registry (pure call) → say so.
+ */
+function activeRuns(runs?: ThreadRuns): string {
+  if (!runs) return "Active runs: (registry not wired)";
+  const handles = runs.handles();
+  if (handles.length === 0) return "Active runs: none";
+
+  const lines = [`Active runs (${handles.length}):`];
+  for (const handle of handles) {
+    const run = runs.status(handle);
+    if (!run) continue;
+    const turn = run.turnId ? ` turn=${run.turnId}` : " turn=(none yet)";
+    // The last undrained event, if any — a poll may have already drained the log,
+    // so this is best-effort colour on top of the authoritative `status`.
+    const last = run.events.at(-1);
+    const beat = last ? ` — ${last.text}` : "";
+    lines.push(`  [${run.status}] ${handle}${turn}${beat}`);
+  }
   return lines.join("\n");
 }
 

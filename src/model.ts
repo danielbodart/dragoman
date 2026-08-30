@@ -21,6 +21,30 @@ export interface Beat {
   readonly text: string;
 }
 
+/**
+ * One entry in a run's single timeline — the unified message log.
+ *
+ * Everything a run wants to tell the caller is ONE of these, regardless of which
+ * inbound channel produced it: a progress milestone from the notification feed, an
+ * approval raised/resolved by the server-request handler, a note from Codex, or the
+ * terminal outcome. All producers `append` a `RunEvent`; `codex_status` drains the
+ * log and renders it — so a new source can never reintroduce the "we dropped that
+ * one" bug, because there is exactly one place state is kept (docs/PLAN.md: the
+ * back-channel table). `kind` exists only so the renderer can phrase the terminal
+ * outcome ("Done. …") differently from in-flight progress; every non-terminal
+ * source is `progress`.
+ */
+export type RunEventKind = "progress" | "result" | "error";
+
+export interface RunEvent {
+  /** When the source emitted this (ms), or our clock. */
+  readonly at: number;
+  /** Which phrasing the renderer should give it. Non-terminal sources are `progress`. */
+  readonly kind: RunEventKind;
+  /** The human-facing one-liner. */
+  readonly text: string;
+}
+
 /** Opaque handle `codex_run` returns and `codex_status` takes. Currently a thread id. */
 export type RunHandle = string;
 
@@ -37,14 +61,22 @@ export type RunStatus = "starting" | "running" | "waiting-approval" | "done" | "
  * The bridge's live record of one Codex run.
  *
  * The background pump mutates this as notifications arrive; `codex_status` reads
- * it with no I/O at all. Each milestone is appended to `pendingBeats` and drained
- * by the next `codex_status` — so the heartbeat is delivered as the sparse
- * *sequence* it was always meant to be, losing no beat at the polling boundary.
- * The firehose between milestones is still dropped by construction (never a beat,
- * never stored); `latestBeat` retains only the most recent, for a quick snapshot.
+ * it with no I/O at all. Two kinds of state, deliberately separated:
+ *
+ *  - `status` — the persistent CONTROL scalar (latest-wins, safe to overwrite): the
+ *    O(1) "is it running / waiting / done?" the long-poll needs to decide whether to
+ *    park and the caller needs to decide whether to stop.
+ *  - `events` — the append-only MESSAGE log (never overwritten, drained once): every
+ *    milestone, approval, note and terminal outcome, from every inbound channel, in
+ *    order. This is the single place run output is kept, so no source can drop
+ *    another's message at the polling boundary. The firehose between milestones is
+ *    still dropped by construction (never becomes an event).
  */
 export interface RunRecord {
   readonly handle: RunHandle;
+  /** The working directory the run was started in. Retained so `codex_continue`
+   * can resume the thread and re-mirror against the same cwd + writable roots. */
+  readonly cwd?: string;
   /** Command token prefixes Claude would allow without prompting. */
   readonly execpolicyAmendments?: readonly (readonly string[])[];
   /** Command token prefixes Claude would deny — pre-declined without prompting. */
@@ -56,14 +88,13 @@ export interface RunRecord {
    * for `acceptEdits`), or refuse (`decline`, for `dontAsk`). */
   readonly fileChange?: "elicit" | "accept" | "decline";
   status: RunStatus;
-  /** The most recent milestone — a cheap snapshot of "where is it right now". */
-  latestBeat?: Beat;
-  /** Milestones the pump has recorded but `codex_status` has not yet delivered,
-   * oldest first. Appended by the pump, drained (emptied) on each status poll —
-   * this buffer is what makes the heartbeat lossless across the polling boundary. */
-  pendingBeats?: Beat[];
-  /** The final assistant message / turn result, once `status` is "done". */
-  result?: string;
-  /** A human-facing error string, once `status` is "error". */
-  error?: string;
+  /** The active turn's id (Codex UUIDv7), refreshed on every `turn/started`.
+   * The precondition `turn/interrupt` and `turn/steer` both require — captured
+   * here so a cancel/steer/continue tool can name the turn without a round-trip —
+   * and surfaced by `diagnostics` as the live view of what each run is doing. */
+  turnId?: string;
+  /** The single append-only timeline (see the type doc): every producer appends, and
+   * `codex_status` drains it in order. The terminal outcome is the last event of kind
+   * `result`/`error` — not a special field — so nothing here is delivered specially. */
+  events: RunEvent[];
 }
