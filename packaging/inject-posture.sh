@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # PreToolUse hook for codex_run — inject Claude's LIVE permission mode as `posture`.
 #
 # The MCP server can't see the current interactive permission mode: it reads only the

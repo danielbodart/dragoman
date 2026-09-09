@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # SessionStart hook: warn early if `bun` is missing.
 #
 # Dragoman ships as a bundled JS run by bun (not a self-contained binary), so
