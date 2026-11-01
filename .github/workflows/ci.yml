@@ -31,7 +31,7 @@ jobs:
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
-      - uses: jdx/mise-action@v4
+      - uses: jdx/mise-action@v5
 
       # Everything real lives in mise tasks, so local dev runs the same steps.
       - run: mise run ci
