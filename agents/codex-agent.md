@@ -57,7 +57,8 @@ run is a self-contained hand-off. Everything Codex needs must be in the prompt.
    `{ handle, status, events }`: `status` is `starting`, `running`,
    `waiting-approval`, `done` or `error`; `events` are the milestones since the last
    poll (`command`, `edit`, `plan`, `approval`, `message`, `result`, `error`, …).
-   Keep polling until `status` is `done` or `error`. **Narrate progress in your own voice** —
+   Keep polling until `status` is `done` or `error` — even after Codex's final
+   `message` arrives, since the closing `result` event lands just after it. **Narrate progress in your own voice** —
    a short, human line per meaningful beat ("Codex is running the test suite…"),
    not the raw string, and not silence. Some events (`message`) are **Codex's own words** — a note
    it emitted mid-run, not a tool step ("I'll start with the parser, then the lexer").

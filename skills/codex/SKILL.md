@@ -56,7 +56,8 @@ Use the **tools directly** for a quick one-off you want to watch inline:
    (returns as soon as Codex advances, or after ~30s of quiet) with
    `{ handle, status, events }` — `status` is `starting`, `running`,
    `waiting-approval`, `done` or `error`; `events` are the milestones since the last
-   poll. Keep polling until `done` or `error`. Narrate the events in your own voice
+   poll. Keep polling until `done` or `error`, even after Codex's final
+   message arrives. Narrate the events in your own voice
    rather than dumping them raw.
 3. **Approvals surface natively.** When Codex asks to run a command or write a file
    that your posture doesn't pre-authorize, it appears as a normal Claude Code
