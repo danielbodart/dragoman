@@ -7,7 +7,7 @@ description: >-
   the user says "ask Codex", "get Codex to…", "hand this to Codex",
   "what does Codex think", "second opinion from Codex", or wants a parallel
   or independent take on code. Covers how to start a run, follow its
-  progress, answer its approvals, and pick the right permission posture.
+  progress, answer its approvals, and how its permissions mirror yours.
 version: 0.1.0
 ---
 
@@ -50,14 +50,14 @@ result back, clean.
 
 Use the **tools directly** for a quick one-off you want to watch inline:
 
-1. **Start** — `codex_run({ prompt, cwd })` returns a handle immediately (omit
-   `posture` — see below).
+1. **Start** — `codex_run({ prompt, cwd })` returns a handle immediately.
    The run proceeds in the background.
 2. **Follow** — poll `codex_status({ handle })` in a loop. Each call long-polls
-   (blocks until Codex advances, up to ~100s) and returns a one-line heartbeat:
-   `Running — <beat>`, `Waiting for your approval — <beat>`, `Done. <result>`, or
-   `Errored: <reason>`. Keep polling until `Done.` or `Errored:`. Narrate the beats
-   in your own voice rather than dumping them raw.
+   (returns as soon as Codex advances, or after ~30s of quiet) with
+   `{ handle, status, events }` — `status` is `starting`, `running`,
+   `waiting-approval`, `done` or `error`; `events` are the milestones since the last
+   poll. Keep polling until `done` or `error`. Narrate the events in your own voice
+   rather than dumping them raw.
 3. **Approvals surface natively.** When Codex asks to run a command or write a file
    that your posture doesn't pre-authorize, it appears as a normal Claude Code
    approval prompt. Just answer it — Dragoman delivers your decision back to Codex
@@ -74,11 +74,10 @@ A run isn't fire-and-forget — you can act on it the way you would your own wor
 - **Cancel** — `codex_cancel({ handle })` stops a run that's gone off the rails or is
   no longer needed. Poll `codex_status` to confirm it stopped. Prefer *steer* to
   redirect rather than abandon.
-- **Continue** — after `Done.`, `codex_continue({ handle, prompt })` sends a follow-up
+- **Continue** — after `done`, `codex_continue({ handle, prompt })` sends a follow-up
   on the **same thread**, so Codex keeps everything it learned instead of starting
   cold — the natural next step ("now write the tests", "also update the changelog").
-  Reuse the original handle; it re-mirrors your current posture, so the same
-  leave-`posture`-unset rule applies. (Still running? Steer, don't continue.)
+  Reuse the original handle; it re-mirrors your current mode. (Still running? Steer, don't continue.)
 
 ## Writing the prompt
 
@@ -87,28 +86,12 @@ paths involved, what "done" looks like, and any constraints. Treat it like brief
 a capable engineer who just walked in. `cwd` must be the **absolute path** to the
 working directory for the task.
 
-## Posture — leave it to Dragoman
+## Permissions — mirrored, not chosen
 
-**Normally don't pass `posture` at all.** When you omit it, Dragoman reads Claude's
-*live* permission posture and mirrors it onto Codex, so Codex runs with exactly the
-access you have. That auto-mirroring is the whole point — don't second-guess it by
-passing a mode you *think* matches your session; you'll usually get it wrong and
-leave Codex more restricted (or more permissive) than Claude actually is.
-
-Only pass `posture` when the **user explicitly** asks Codex to run in a particular
-mode. What each override means, if you do:
-
-| posture | Codex runs… |
-|---|---|
-| `plan` | read-only — investigation and review, no edits |
-| `default` | normal — asks before acting outside the workspace |
-| `acceptEdits` | edits the workspace freely, asks for the rest |
-| `auto` | acts in the workspace, asks before leaving it |
-| `dontAsk` | proceeds without pausing to ask, still sandboxed |
-| `bypassPermissions` | full access |
-
-The commonest legitimate override is a user asking for a **read-only** review →
-`plan`.
+Codex runs under **Claude's live permission mode**: a PreToolUse hook records the
+mode at each `codex_run` / `codex_continue` / `codex_review`, and Dragoman mirrors it
+(plus your allow/deny rules and sandbox settings) onto Codex. There is nothing to
+pass. To run Codex read-only, switch Claude to plan mode first.
 
 ## After the run
 

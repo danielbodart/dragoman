@@ -15,6 +15,7 @@
  * KEYS + counts, never full file contents, so nothing sensitive lands in the
  * transcript.
  */
+import { liveModeDir } from "./live-mode.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -85,6 +86,8 @@ export interface DiagnosticsReport {
   readonly projectDir: string;
   readonly configDir: string;
   readonly settingsFiles: readonly SettingsFile[];
+  /** Where the PreToolUse hook hands each provisioning call its live permission mode. */
+  readonly liveModeDir: string;
   readonly mirror: {
     readonly effective: {
       readonly defaultMode: string | null;
@@ -117,6 +120,7 @@ export function diagnostics(runs?: ThreadRuns): DiagnosticsReport {
     projectDir,
     configDir,
     settingsFiles: settingsFiles(projectDir, configDir),
+    liveModeDir: liveModeDir(),
     mirror: {
       effective: {
         defaultMode: settings.defaultMode ?? null,

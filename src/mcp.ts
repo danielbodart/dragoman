@@ -15,6 +15,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { CallToolRequestSchema, ListToolsRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import { diagnostics } from "./diagnostics.ts";
+import { takeLiveMode, toolUseIdOf } from "./live-mode.ts";
 import type { ThreadRuns } from "./thread-run.ts";
 import type { RunEvent, RunStatus } from "./model.ts";
 import type { ReviewTarget } from "../generated/codex-protocol/ts/v2/ReviewTarget.ts";
@@ -46,7 +47,7 @@ interface AckResult {
  * Returns the `Server` so the caller can build the `ElicitationChannel` over it
  * and then `serve()` it.
  */
-export function buildServer(runs: ThreadRuns): Server {
+export function buildServer(runs: ThreadRuns, liveMode: (toolUseId: string | undefined) => string | undefined = takeLiveMode): Server {
   // `elicitation` is a CLIENT capability (Claude Code advertises it so the
   // server may send elicitation/create); the server only declares `tools`.
   const server = new Server(
@@ -58,9 +59,11 @@ export function buildServer(runs: ThreadRuns): Server {
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    // The live mode the PreToolUse hook recorded for THIS call (see live-mode.ts).
+    const mode = () => liveMode(toolUseIdOf(request.params._meta));
     switch (name) {
       case "codex_run":
-        return result(await runCodex(runs, args ?? {}));
+        return result(await runCodex(runs, args ?? {}, mode()));
       case "codex_status":
         return result(await statusCodex(runs, args ?? {}));
       case "codex_steer":
@@ -68,9 +71,9 @@ export function buildServer(runs: ThreadRuns): Server {
       case "codex_cancel":
         return result(await cancelCodex(runs, args ?? {}));
       case "codex_continue":
-        return result(await continueCodex(runs, args ?? {}));
+        return result(await continueCodex(runs, args ?? {}, mode()));
       case "codex_review":
-        return result(await reviewCodex(runs, args ?? {}));
+        return result(await reviewCodex(runs, args ?? {}, mode()));
       case "diagnostics":
         return result(diagnostics(runs));
       default:
@@ -123,18 +126,6 @@ const TOOLS = [
       properties: {
         prompt: { type: "string", description: "What Codex should do." },
         cwd: { type: "string", description: "Working directory for the task (absolute path)." },
-        posture: {
-          type: "string",
-          enum: ["plan", "default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"],
-          description:
-            "OPTIONAL — normally OMIT this. When omitted, Dragoman automatically mirrors " +
-            "Claude's own live permission posture onto Codex, so Codex gets exactly the same " +
-            "access you have. That auto-mirroring is the whole point; passing a value OVERRIDES " +
-            "it with a fixed mode and will usually make Codex more restricted (or more permissive) " +
-            "than Claude actually is. Only pass a value when the user explicitly asks Codex to run " +
-            "in a specific mode (e.g. 'run Codex read-only' → 'plan'). Do NOT set it just because " +
-            "you think you know your current mode — leave it unset and let Dragoman read the real one.",
-        },
       },
       required: ["prompt", "cwd"],
     },
@@ -209,12 +200,6 @@ const TOOLS = [
           description:
             "OPTIONAL custom review focus (e.g. \"focus on error handling and edge cases\"). When set, Codex runs a custom review with these instructions instead of a plain diff review.",
         },
-        posture: {
-          type: "string",
-          enum: ["plan", "default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"],
-          description:
-            "OPTIONAL — normally OMIT. As with codex_run, Dragoman mirrors Claude's live posture; only pass a value when the user explicitly asks for a specific mode.",
-        },
       },
       required: ["cwd"],
     },
@@ -232,13 +217,6 @@ const TOOLS = [
       properties: {
         handle: { type: "string", description: "The handle of the finished task to continue." },
         prompt: { type: "string", description: "The follow-up for Codex to do next on the same thread." },
-        posture: {
-          type: "string",
-          enum: ["plan", "default", "acceptEdits", "auto", "dontAsk", "bypassPermissions"],
-          description:
-            "OPTIONAL — normally OMIT. As with codex_run, Dragoman mirrors Claude's live posture onto the continuation by default; " +
-            "only pass a value when the user explicitly asks for a specific mode.",
-        },
       },
       required: ["handle", "prompt"],
     },
@@ -246,10 +224,9 @@ const TOOLS = [
   },
 ] as const;
 
-async function runCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<AckResult> {
+async function runCodex(runs: ThreadRuns, args: Record<string, unknown>, posture: string | undefined): Promise<AckResult> {
   const prompt = String(args.prompt ?? "");
   const cwd = String(args.cwd ?? "");
-  const posture = typeof args.posture === "string" ? args.posture : undefined;
   if (!prompt || !cwd) return { message: "codex_run needs both `prompt` and `cwd`." };
   const handle = await runs.start(prompt, cwd, posture);
   return { handle, message: `Started Codex task. Poll codex_status with handle "${handle}".` };
@@ -268,18 +245,16 @@ async function cancelCodex(runs: ThreadRuns, args: Record<string, unknown>): Pro
   return { handle, message: await runs.cancel(handle) };
 }
 
-async function continueCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<AckResult> {
+async function continueCodex(runs: ThreadRuns, args: Record<string, unknown>, posture: string | undefined): Promise<AckResult> {
   const handle = String(args.handle ?? "");
   const prompt = String(args.prompt ?? "");
-  const posture = typeof args.posture === "string" ? args.posture : undefined;
   if (!handle || !prompt) return { message: "codex_continue needs both `handle` and `prompt`." };
   return { handle, message: await runs.continueRun(handle, prompt, posture) };
 }
 
-async function reviewCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<AckResult> {
+async function reviewCodex(runs: ThreadRuns, args: Record<string, unknown>, posture: string | undefined): Promise<AckResult> {
   const cwd = String(args.cwd ?? "");
   if (!cwd) return { message: "codex_review needs a `cwd`." };
-  const posture = typeof args.posture === "string" ? args.posture : undefined;
   const instructions = typeof args.instructions === "string" && args.instructions ? args.instructions : undefined;
   const against = typeof args.against === "string" && args.against ? args.against : undefined;
   // A custom focus wins; else diff against a named base; else the uncommitted changes.

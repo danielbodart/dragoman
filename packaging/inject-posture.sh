@@ -1,32 +1,31 @@
 #!/usr/bin/env bash
-# PreToolUse hook for codex_run — inject Claude's LIVE permission mode as `posture`.
+# PreToolUse hook for codex_run / codex_continue / codex_review — record Claude's LIVE
+# permission mode for the MCP server.
 #
 # The MCP server can't see the current interactive permission mode: it reads only the
 # static `permissions.defaultMode` from settings.json, so a mid-session switch (e.g. to
 # `plan` or `acceptEdits`) never reaches it. But a PreToolUse hook DOES get the live
-# mode on stdin as `.permission_mode`. So we read it here and merge it into the
-# codex_run tool input as `posture`, which Dragoman already mirrors onto Codex.
+# mode on stdin as `.permission_mode`. We write it to a file named after this call's
+# `.tool_use_id`, which Claude Code also sends on the MCP request; the server reads
+# and deletes it (src/live-mode.ts computes the same path — keep the two in step).
 #
-# If the model set `posture` explicitly (a deliberate override, e.g. "run Codex
-# read-only"), we leave it alone. If there's no mode, we do nothing and Dragoman falls
-# back to its own resolution.
+# We deliberately do NOT touch the tool input. Returning `updatedInput` made Claude
+# Code's auto-mode classifier refuse the call (it won't judge input a hook changed),
+# so every Codex call in auto mode had to be resent. This hook prints nothing.
 
 INPUT=$(cat)
 
 MODE=$(printf '%s' "$INPUT" | jq -r '.permission_mode // empty')
-EXISTING=$(printf '%s' "$INPUT" | jq -r '.tool_input.posture // empty')
+CALL=$(printf '%s' "$INPUT" | jq -r '.tool_use_id // empty')
 
-# Nothing to inject: explicit override present, or no mode reported.
-if [ -n "$EXISTING" ] || [ -z "$MODE" ]; then
-  exit 0
-fi
+# Nothing to record, or a tool-use id we won't use as a file name.
+[ -n "$MODE" ] && [ -n "$CALL" ] || exit 0
+case "$CALL" in *[!A-Za-z0-9_-]*) exit 0 ;; esac
 
-# Add `posture` and echo back the WHOLE tool input: `updatedInput` REPLACES the input
-# (verified — it does not merge, despite the docs), so returning only `{posture}` would
-# drop `prompt`/`cwd`.
-printf '%s' "$INPUT" | jq -c --arg mode "$MODE" '{
-  hookSpecificOutput: {
-    hookEventName: "PreToolUse",
-    updatedInput: (.tool_input + { posture: $mode })
-  }
-}'
+DIR="${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/dragoman/live-mode"
+mkdir -p -m 700 "$DIR" 2>/dev/null || exit 0
+
+# Write-then-rename so the server never reads a half-written file.
+TMP="$DIR/.$CALL.$$"
+printf '%s\n' "$MODE" > "$TMP" && mv -f "$TMP" "$DIR/$CALL" || rm -f "$TMP"
+exit 0

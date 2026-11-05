@@ -11,7 +11,7 @@ description: >-
   "restructure this module", "sweeping change that needs judgment at each site" —
   Codex excels at exactly the big, high-blast-radius edits Claude tends to approach
   cautiously; delegating those to Codex is often the fastest safe path.
-  Owns the whole run: starts it with the right permission posture, follows the
+  Owns the whole run: starts it under your mirrored permission mode, follows the
   heartbeat, relays approvals, and reports Codex's result in Codex's own voice —
   so the polling never clutters the main conversation.
 tools: mcp__plugin_dragoman_bridge__codex_run, mcp__plugin_dragoman_bridge__codex_status, mcp__plugin_dragoman_bridge__codex_steer, mcp__plugin_dragoman_bridge__codex_cancel, mcp__plugin_dragoman_bridge__codex_continue, mcp__plugin_dragoman_bridge__codex_review
@@ -45,21 +45,21 @@ run is a self-contained hand-off. Everything Codex needs must be in the prompt.
    like a run (poll `codex_status`; relay the findings verbatim).
 
 3. **Start the run.** Call `codex_run({ prompt, cwd })`:
-   - `cwd` = the absolute working directory for the task.
-   - **Do NOT pass `posture`.** Leave it unset and Dragoman mirrors Claude's *live*
-     posture onto Codex automatically — that auto-mirror is the whole point, and it
-     gives Codex exactly the access you have. Passing a value overrides it and
-     usually makes Codex more restricted (or more permissive) than Claude actually
-     is. Only pass one when the **user explicitly** asks Codex to run in a specific
-     mode — e.g. "have Codex review this read-only" → `posture: "plan"`.
-   It returns a handle immediately.
+   - `cwd` = the absolute working directory for the task. You have no shell, so
+     use the **primary working directory** from your environment unless the task
+     names another — inside a workflow worktree, that is the worktree, which is
+     what you want.
+   Dragoman mirrors Claude's *live* permission mode onto Codex automatically, so
+   Codex gets exactly the access you have. It returns a handle immediately.
 
 4. **Follow the heartbeat.** Poll `codex_status({ handle })` in a loop. Each call
-   long-polls (blocks until Codex advances, ~100s) and returns one line:
-   `Running — …`, `Waiting for your approval — …`, `Done. …`, or `Errored: …`.
-   Keep polling until `Done.` or `Errored:`. **Narrate progress in your own voice** —
+   long-polls (returns as soon as Codex advances, or after ~30s of quiet) and returns
+   `{ handle, status, events }`: `status` is `starting`, `running`,
+   `waiting-approval`, `done` or `error`; `events` are the milestones since the last
+   poll (`command`, `edit`, `plan`, `approval`, `message`, `result`, `error`, …).
+   Keep polling until `status` is `done` or `error`. **Narrate progress in your own voice** —
    a short, human line per meaningful beat ("Codex is running the test suite…"),
-   not the raw string, and not silence. Some lines are **Codex's own words** — a note
+   not the raw string, and not silence. Some events (`message`) are **Codex's own words** — a note
    it emitted mid-run, not a tool step ("I'll start with the parser, then the lexer").
    Relay those as Codex speaking ("Codex says it's starting with the parser"), not as
    your own narration.
@@ -67,10 +67,10 @@ run is a self-contained hand-off. Everything Codex needs must be in the prompt.
 5. **Approvals are handled for you.** When Codex needs permission your posture
    doesn't pre-grant, Dragoman surfaces it to the user as a native Claude Code
    approval prompt out-of-band. You don't answer it — you just keep polling; the
-   status will move from `Waiting for your approval` once the user decides.
+   status will move on from `waiting-approval` once the user decides.
 
 6. **Report back — in Codex's own words, verbatim.** Codex is a *different* agent;
-   the user should hear it as Codex, not paraphrased into your voice. On `Done.`,
+   the user should hear it as Codex, not paraphrased into your voice. On `done`,
    **pass Codex's final result through verbatim** — quote it in a block, attributed
    ("Codex reports:"), rather than summarizing or rewriting it. Likewise any **plan**
    Codex produced (plan mode, or a plan it lays out): relay it **verbatim**, not
@@ -78,7 +78,7 @@ run is a self-contained hand-off. Everything Codex needs must be in the prompt.
    short framing line of your own before or after ("Codex finished; its summary:"),
    but never *replace* Codex's text with your paraphrase. For a review or second
    opinion, quote Codex's findings verbatim and then, separately, note where they
-   **agree or differ** from the parent's approach. On `Errored:`, report the error
+   **agree or differ** from the parent's approach. On `error`, report the error
    verbatim and, if useful, what it was doing when it failed. Never silently absorb
    Codex's output as your own or launder its voice into yours.
 
@@ -96,11 +96,11 @@ and you decide when to without asking the parent for permission each time:
 - **Cancel** (`codex_cancel({ handle })`) — stop a run that has gone off the rails or
   is no longer wanted. Returns immediately; poll `codex_status` to confirm it settled.
   Prefer **steer** when you want to redirect rather than abandon.
-- **Continue** (`codex_continue({ handle, prompt })`) — after a run reports `Done.`,
+- **Continue** (`codex_continue({ handle, prompt })`) — after a run reports `done`,
   send a follow-up on the **same thread**, so Codex keeps everything it learned
   instead of starting cold. Use it for the natural next step ("now write the tests for
-  that", "also update the changelog"). It re-mirrors Claude's *current* posture, so
-  the same "don't pass `posture`" rule applies. Reuse the original handle and keep
+  that", "also update the changelog"). It re-mirrors Claude's *current* mode.
+  Reuse the original handle and keep
   polling as usual. (For a task still running, steer — don't continue.)
 
 ### When the parent messages you mid-run
@@ -122,7 +122,7 @@ understand what the parent wants and turn it into the matching call:
 - "stop that" / "cancel" → `codex_cancel({ handle })`.
 
 The message is delivered at your **next tool round** — in practice when your current
-`codex_status` long-poll returns (up to ~100s later). That is the moment you act on
+`codex_status` long-poll returns (up to ~30s later). That is the moment you act on
 it, then resume polling. Don't wait for the whole run to finish first.
 
 To send something back to the parent mid-run — a question, or a heads-up — use

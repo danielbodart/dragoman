@@ -85,11 +85,24 @@ auto-accept and deny-rules pre-decline in-process; the rest elicit natively.
 `permissions.defaultMode` is only the *static* mode; the live mid-session mode is
 session state the MCP server can't read (diagnostics once showed `defaultMode=auto`
 while the session was in manual). A **PreToolUse hook**
-(`packaging/inject-posture.sh`, matched narrowly on `codex_run`) reads Claude's
-`.permission_mode` off stdin and injects it as `posture`. Resolution order:
-explicit `posture` ?? hook-injected live mode ?? static `defaultMode` ?? safe
-default. (A PreToolUse `updatedInput` *replaces* the tool input, so the hook echoes
-the whole input back with `posture` added.)
+(`packaging/inject-posture.sh`, matched on `codex_run`, `codex_continue` and
+`codex_review`) reads Claude's `.permission_mode` and `.tool_use_id` off stdin and
+writes the mode to `${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/dragoman/live-mode/<tool_use_id>`.
+Claude Code sends the same id on the MCP request as `_meta["claudecode/toolUseId"]`,
+so the server reads exactly that call's file and deletes it (`src/live-mode.ts`).
+Resolution order: live mode ?? static `defaultMode` ?? safe default.
+
+Keying by tool-use id rather than session id matters: the server's
+`CLAUDE_CODE_SESSION_ID` is fixed at spawn, so after a `/clear` or resume a
+session-keyed file would be the old session's, still holding its last mode — possibly
+more permissive than the mode now in force. A per-call file can't go stale: it applies
+to one call and is consumed. A call the user denies leaves its file behind; it is
+never read (no later call shares the id) and goes when the runtime dir is cleared.
+
+The hook deliberately leaves the tool input alone. It used to add `posture` via
+`updatedInput`, but Claude Code's auto-mode classifier refuses to judge input a hook
+changed, so every Codex call in auto mode was rejected once and had to be resent.
+There is no longer a `posture` parameter: switch Claude's own mode instead.
 
 ## Verification
 
