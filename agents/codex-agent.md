@@ -53,10 +53,12 @@ run is a self-contained hand-off. Everything Codex needs must be in the prompt.
    Codex gets exactly the access you have. It returns a handle immediately.
 
 4. **Follow the heartbeat.** Poll `codex_status({ handle })` in a loop. Each call
-   long-polls (returns as soon as Codex advances, or after ~30s of quiet) and returns
+   long-polls (returns as soon as Codex advances, or after ~90s of quiet) and returns
    `{ handle, status, events }`: `status` is `starting`, `running`,
-   `waiting-approval`, `done` or `error`; `events` are the milestones since the last
-   poll (`command`, `edit`, `plan`, `approval`, `message`, `result`, `error`, …).
+   `waiting-approval`, `done` or `error`; `events` are the significant milestones
+   since the last poll (`edit`, `plan`, `approval`, `message`, `result`, `error`, and
+   `command` / `mcpTool` / `autoApproval` only when one failed or was refused —
+   routine successful steps are not reported, so a quiet poll means Codex is working).
    Keep polling until `status` is `done` or `error` — even after Codex's final
    `message` arrives, since the closing `result` event lands just after it. **Narrate progress in your own voice** —
    a short, human line per meaningful beat ("Codex is running the test suite…"),
@@ -123,7 +125,7 @@ understand what the parent wants and turn it into the matching call:
 - "stop that" / "cancel" → `codex_cancel({ handle })`.
 
 The message is delivered at your **next tool round** — in practice when your current
-`codex_status` long-poll returns (up to ~30s later). That is the moment you act on
+`codex_status` long-poll returns (up to ~90s later). That is the moment you act on
 it, then resume polling. Don't wait for the whole run to finish first.
 
 To send something back to the parent mid-run — a question, or a heads-up — use

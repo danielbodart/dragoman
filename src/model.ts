@@ -29,13 +29,13 @@ import type { TurnStatus } from "../generated/codex-protocol/ts/v2/TurnStatus.ts
  * `kind` is the discriminant. `at` is when the source emitted it (ms) or our
  * clock. The rest is per-kind:
  *
- *  - `command`  a shell command, `running` on start / `ran` on completion,
- *               with the exit code and duration once known.
+ *  - `command`  a shell command that FAILED (non-zero exit, or failed/declined),
+ *               with the exit code and duration. Successful commands are not events.
  *  - `edit`     a file patch: each file by path + change kind (add/delete/update).
- *  - `webSearch` a web search, carrying the query and action Codex ran.
- *  - `mcpTool`  an MCP tool call: server, tool, status, and any error.
+ *  - `mcpTool`  an MCP tool call that FAILED: server, tool, status, and the error.
  *  - `plan`     Codex's plan text for the turn.
- *  - `autoApproval` the guardian auto-deciding (no human), with risk + action.
+ *  - `autoApproval` the guardian auto-REFUSING (no human), with risk + action;
+ *               its routine approvals are not events.
  *  - `approval` a HUMAN approval lifecycle: `waiting` when parked, `resolved`
  *               with the decision once answered.
  *  - `message`  Codex's own words mid-run — the one free-text kind — with the
@@ -45,9 +45,8 @@ import type { TurnStatus } from "../generated/codex-protocol/ts/v2/TurnStatus.ts
  *  - `error`    the terminal failure: message and any extra detail.
  */
 export type RunEvent =
-  | { readonly kind: "command"; readonly at: number; readonly phase: "running" | "ran"; readonly command: string; readonly status: CommandExecutionStatus; readonly exitCode?: number; readonly durationMs?: number }
+  | { readonly kind: "command"; readonly at: number; readonly command: string; readonly status: CommandExecutionStatus; readonly exitCode?: number; readonly durationMs?: number }
   | { readonly kind: "edit"; readonly at: number; readonly files: readonly { readonly path: string; readonly change: "add" | "delete" | "update" }[]; readonly status: PatchApplyStatus }
-  | { readonly kind: "webSearch"; readonly at: number; readonly query?: string; readonly action?: "search" | "openPage" | "findInPage" | "other" }
   | { readonly kind: "mcpTool"; readonly at: number; readonly server: string; readonly tool: string; readonly status: McpToolCallStatus; readonly durationMs?: number; readonly error?: string }
   | { readonly kind: "plan"; readonly at: number; readonly text: string }
   | { readonly kind: "autoApproval"; readonly at: number; readonly decision: string; readonly risk?: string; readonly action: string }

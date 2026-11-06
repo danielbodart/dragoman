@@ -10,6 +10,14 @@
  * and few" by construction, rather than by a filter the pump has to remember to
  * apply.
  *
+ * SIGNIFICANT means something the driving agent would act on or relay: a file
+ * edit, Codex's plan, or a step that went WRONG (a failed command or MCP call, a
+ * denied auto-approval). Routine success — every command that exits 0, every
+ * auto-approval the guardian waves through, every web search — is NOT an event.
+ * Each event wakes a parked `codex_status` and costs the driving agent a model
+ * turn over its whole context; one 6h run woke 2,803 times, ~95% of them for
+ * routine commands and auto-approvals, before this rule.
+ *
  * It handles only the non-terminal, thread-scoped milestones (tool items + the
  * guardian's auto-approval). The terminal outcomes (`turn/completed`, `error`),
  * Codex's own `agentMessage`, and the human-approval lifecycle are folded in by
@@ -21,7 +29,6 @@ import type { ThreadItem } from "../generated/codex-protocol/ts/v2/ThreadItem.ts
 import type { ItemGuardianApprovalReviewCompletedNotification } from "../generated/codex-protocol/ts/v2/ItemGuardianApprovalReviewCompletedNotification.ts";
 import type { GuardianApprovalReviewAction } from "../generated/codex-protocol/ts/v2/GuardianApprovalReviewAction.ts";
 import type { FileUpdateChange } from "../generated/codex-protocol/ts/v2/FileUpdateChange.ts";
-import type { WebSearchAction } from "../generated/codex-protocol/ts/v2/WebSearchAction.ts";
 
 /** The `threadId` a notification concerns, or undefined for feed-wide (account/app/model) events. */
 export function threadIdOf(notification: Notification): string | undefined {
@@ -45,20 +52,19 @@ export function eventOf(notification: Notification): RunEvent | undefined {
     case "item/completed":
       return itemEvent(notification.params.item, "done", at);
     case "item/autoApprovalReview/completed":
-      return approvalEvent(notification.params, at);
+      // A guardian approval is routine (the run just carries on); only a refusal is news.
+      return notification.params.review.status === "approved" ? undefined : approvalEvent(notification.params, at);
     default:
       return undefined;
   }
 }
 
 /**
- * A structured event for a completed auto-approval review — Codex's internal
- * guardian deciding, without a human prompt, whether an action clears the sandbox
- * wall. Under `approvalPolicy: granular` these fire silently; surfacing the
- * decision (and what it was about) makes the otherwise-invisible auto-approval
- * visible, so a watcher sees *why* a run sailed past a command that would normally
- * prompt. `started`, `guardianWarning` (a redundant human summary of this same
- * decision) and `strictReviewRequired` are not milestones here.
+ * A structured event for an auto-approval review the guardian did NOT approve —
+ * Codex's internal guardian refusing, without a human prompt, to let an action
+ * past the sandbox wall. Surfacing it (and what it was about) explains why a run
+ * changed course. `started`, `guardianWarning` (a redundant human summary of this
+ * same decision) and `strictReviewRequired` are not milestones here.
  */
 function approvalEvent(params: ItemGuardianApprovalReviewCompletedNotification, at: number): RunEvent {
   const { status, riskLevel } = params.review;
@@ -98,26 +104,23 @@ function actionSummary(action: GuardianApprovalReviewAction): string {
   }
 }
 
-/** The `type` of a web search's action, when present. */
-function webSearchActionType(action: WebSearchAction | null): "search" | "openPage" | "findInPage" | "other" | undefined {
-  return action?.type;
-}
-
 /**
  * A structured event for a thread item, keyed on its `type` and lifecycle phase.
  *
- * Only the item kinds that read as user-visible work become events; the rest
- * (reasoning, raw messages, housekeeping) are not milestones and drop to
- * undefined. Each keeps the source's own fields (command, files, server/tool,
- * query) rather than flattening them into a sentence.
+ * Only edits, plans and failed steps become events; the rest (successful
+ * commands and tool calls, web searches, reasoning, raw messages, housekeeping)
+ * drop to undefined. Each keeps the source's own fields (command, files,
+ * server/tool) rather than flattening them into a sentence.
  */
 function itemEvent(item: ThreadItem, phase: "start" | "done", at: number): RunEvent | undefined {
   switch (item.type) {
     case "commandExecution":
+      // Only a command that went wrong, on completion — a start, or a clean exit 0,
+      // is routine progress, not something to wake the driving agent for.
+      if (phase === "start" || (item.status === "completed" && (item.exitCode ?? 0) === 0)) return undefined;
       return {
         kind: "command",
         at,
-        phase: phase === "start" ? "running" : "ran",
         command: item.command,
         status: item.status,
         ...(item.exitCode != null ? { exitCode: item.exitCode } : {}),
@@ -131,6 +134,8 @@ function itemEvent(item: ThreadItem, phase: "start" | "done", at: number): RunEv
       // Emit once, on completion — the plan text is identical on start and done.
       return phase === "done" ? { kind: "plan", at, text: item.text } : undefined;
     case "mcpToolCall":
+      // Like commands: only a call that failed, on completion.
+      if (phase === "start" || item.status !== "failed") return undefined;
       return {
         kind: "mcpTool",
         at,
@@ -140,12 +145,6 @@ function itemEvent(item: ThreadItem, phase: "start" | "done", at: number): RunEv
         ...(item.durationMs != null ? { durationMs: item.durationMs } : {}),
         ...(item.error ? { error: item.error.message } : {}),
       };
-    case "webSearch":
-      // Emit the query once, when the search starts — its own field, no longer
-      // flattened to a bare "searching the web".
-      return phase === "start"
-        ? { kind: "webSearch", at, ...(item.query ? { query: item.query } : {}), ...(webSearchActionType(item.action) ? { action: webSearchActionType(item.action)! } : {}) }
-        : undefined;
     default:
       return undefined;
   }

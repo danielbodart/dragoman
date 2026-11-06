@@ -516,6 +516,26 @@ export class ThreadRuns {
     return { snapshot: this.status(handle), revision: this.revision(handle) };
   }
 
+  /**
+   * Park until the run has an undelivered event or is terminal, or `timeoutMs`
+   * elapses — the wait behind `codex_status`. Unlike `waitForUpdate`, a bump that
+   * appends no event (rate-limit or token-usage telemetry, a turn id) does not end
+   * it: the caller would only spend a model turn reading an empty reply, so it
+   * parks again on the remaining budget.
+   */
+  async waitForEvents(handle: RunHandle, timeoutMs: number): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    const settled = () => {
+      const status = this.status(handle)?.status;
+      return this.hasPending(handle) || status === undefined || status === "done" || status === "error";
+    };
+    while (!settled()) {
+      const remaining = deadline - Date.now();
+      if (remaining <= 0) return;
+      await this.waitForUpdate(handle, this.revision(handle), remaining);
+    }
+  }
+
   private fail(handle: RunHandle, message: string): void {
     const run = this.runs.get(handle);
     // Only fail a run still in its opening phase. A late-settling turn/start

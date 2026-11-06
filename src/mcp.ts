@@ -271,9 +271,11 @@ async function reviewCodex(runs: ThreadRuns, args: Record<string, unknown>, post
  * "still running" so the caller can poll again. It returns the INSTANT a beat lands
  * (event-driven wake), so this is only the cap for a quiet stretch — and it doubles as
  * the worst-case latency for a steer/cancel message reaching a subagent parked here (it
- * can only act once this call returns). 30s balances that against re-poll churn on a
- * fully-quiet run; well under Claude Code's ~120s tool-call ceiling. */
-const STATUS_LONGPOLL_MS = 30_000;
+ * can only act once this call returns). Routine steps are not events (heartbeat.ts), so
+ * a busy run is "quiet" here too and every timeout costs the caller an empty turn; 90s
+ * trades a slower steer/cancel for a third of those turns, still under Claude Code's
+ * ~120s tool-call ceiling. */
+const STATUS_LONGPOLL_MS = 90_000;
 
 async function statusCodex(runs: ThreadRuns, args: Record<string, unknown>): Promise<StatusResult | { error: string }> {
   const handle = String(args.handle ?? "");
@@ -285,10 +287,8 @@ async function statusCodex(runs: ThreadRuns, args: Record<string, unknown>): Pro
   // already buffered we skip the wait and hand them over now — never leaving one
   // sitting until the next bump. Times out to a "still running" snapshot the caller
   // re-polls, staying under the tool-call ceiling.
-  if (!runs.hasPending(handle)) {
-    const since = runs.revision(handle);
-    await runs.waitForUpdate(handle, since, STATUS_LONGPOLL_MS);
-  }
+  // A bump that carries no event (telemetry) does not end the wait — see waitForEvents.
+  await runs.waitForEvents(handle, STATUS_LONGPOLL_MS);
 
   const run = runs.status(handle);
   if (!run) return { error: `No Codex task with handle "${handle}".` };

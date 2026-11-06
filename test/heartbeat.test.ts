@@ -50,15 +50,25 @@ describe("eventOf", () => {
       .toBeUndefined();
   });
 
-  test("a started command carries the command as its own field, phase 'running'", () => {
-    expect(eventOf(itemStarted(commandItem("cargo test"))))
-      .toEqual({ kind: "command", at: 1000, phase: "running", command: "cargo test", status: "inProgress" });
+  test("a command starting is routine, not an event", () => {
+    expect(eventOf(itemStarted(commandItem("cargo test")))).toBeUndefined();
   });
 
-  test("a completed command reads phase 'ran' and surfaces exit code + duration", () => {
-    const item = commandItem("ls", { status: "completed", exitCode: 0, durationMs: 42 });
+  test("a command that exits 0 is routine, not an event", () => {
+    expect(eventOf(itemCompleted(commandItem("ls", { status: "completed", exitCode: 0, durationMs: 42 })))).toBeUndefined();
+  });
+
+  test("a command that exits non-zero surfaces command, exit code + duration", () => {
+    const item = commandItem("cargo test", { status: "completed", exitCode: 101, durationMs: 42 });
     expect(eventOf(itemCompleted(item, "t1", 2000)))
-      .toEqual({ kind: "command", at: 2000, phase: "ran", command: "ls", status: "completed", exitCode: 0, durationMs: 42 });
+      .toEqual({ kind: "command", at: 2000, command: "cargo test", status: "completed", exitCode: 101, durationMs: 42 });
+  });
+
+  test("a failed or declined command is an event even without an exit code", () => {
+    expect(eventOf(itemCompleted(commandItem("rm -rf /", { status: "declined" }))))
+      .toEqual({ kind: "command", at: 1000, command: "rm -rf /", status: "declined" });
+    expect(eventOf(itemCompleted(commandItem("nope", { status: "failed" }))))
+      .toEqual({ kind: "command", at: 1000, command: "nope", status: "failed" });
   });
 
   test("a file change lists each file by path + change kind, on completion only", () => {
@@ -68,21 +78,21 @@ describe("eventOf", () => {
       .toEqual({ kind: "edit", at: 1000, status: "completed", files: [{ path: "src/a.ts", change: "update" }, { path: "b.ts", change: "update" }] });
   });
 
-  test("a web search surfaces the query (no longer flattened to 'searching the web')", () => {
+  test("a web search is routine, not an event", () => {
     const search = { type: "webSearch", id: "w1", query: "rust async traits", action: { type: "search", query: "rust async traits", queries: null }, results: null } as ThreadItem;
-    expect(eventOf(itemStarted(search))).toEqual({ kind: "webSearch", at: 1000, query: "rust async traits", action: "search" });
-    // Only on start — the completion of the same search adds nothing new.
+    expect(eventOf(itemStarted(search))).toBeUndefined();
     expect(eventOf(itemCompleted(search))).toBeUndefined();
   });
 
-  test("an mcp tool call carries server, tool, status and any error", () => {
+  test("only a failed mcp tool call is an event, carrying server, tool, status and error", () => {
     const ok = { type: "mcpToolCall", id: "m1", server: "linear", tool: "list_issues", status: "completed", arguments: {}, appContext: null, pluginId: null, readOnlyHint: null, result: null, error: null, durationMs: 88 } as ThreadItem;
-    expect(eventOf(itemCompleted(ok))).toEqual({ kind: "mcpTool", at: 1000, server: "linear", tool: "list_issues", status: "completed", durationMs: 88 });
+    expect(eventOf(itemStarted({ ...ok, status: "inProgress" } as ThreadItem))).toBeUndefined();
+    expect(eventOf(itemCompleted(ok))).toBeUndefined();
     const failed = { ...ok, status: "failed", error: { message: "boom" }, durationMs: null } as ThreadItem;
     expect(eventOf(itemCompleted(failed))).toEqual({ kind: "mcpTool", at: 1000, server: "linear", tool: "list_issues", status: "failed", error: "boom" });
   });
 
-  test("a completed auto-approval surfaces the decision, risk and action", () => {
+  test("an approved auto-approval is routine, not an event", () => {
     const n: Notification = {
       emittedAtMs: 3000,
       method: "item/autoApprovalReview/completed",
@@ -93,7 +103,7 @@ describe("eventOf", () => {
         action: { type: "command", source: "agent", command: 'echo "hi"', cwd: "/repo" },
       } as never,
     };
-    expect(eventOf(n)).toEqual({ kind: "autoApproval", at: 3000, decision: "approved", risk: "low", action: 'echo "hi"' });
+    expect(eventOf(n)).toBeUndefined();
   });
 
   test("a denied auto-approval drops absent risk and summarises the action", () => {
@@ -122,7 +132,7 @@ describe("eventOf", () => {
 
   test("falls back to now when emittedAtMs is absent", () => {
     const before = Date.now();
-    const event = eventOf({ method: "item/started", params: { item: commandItem("ls"), threadId: "t1", turnId: "turn1", startedAtMs: 0 } });
+    const event = eventOf({ method: "item/completed", params: { item: commandItem("false", { status: "completed", exitCode: 1 }), threadId: "t1", turnId: "turn1", completedAtMs: 0 } });
     expect(event!.at).toBeGreaterThanOrEqual(before);
   });
 });

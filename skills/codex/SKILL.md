@@ -53,9 +53,9 @@ Use the **tools directly** for a quick one-off you want to watch inline:
 1. **Start** — `codex_run({ prompt, cwd })` returns a handle immediately.
    The run proceeds in the background.
 2. **Follow** — poll `codex_status({ handle })` in a loop. Each call long-polls
-   (returns as soon as Codex advances, or after ~30s of quiet) with
+   (returns as soon as Codex advances, or after ~90s of quiet) with
    `{ handle, status, events }` — `status` is `starting`, `running`,
-   `waiting-approval`, `done` or `error`; `events` are the milestones since the last
+   `waiting-approval`, `done` or `error`; `events` are the significant milestones since the last
    poll. Keep polling until `done` or `error`, even after Codex's final
    message arrives. Narrate the events in your own voice
    rather than dumping them raw.

@@ -140,32 +140,32 @@ describe("codex_run / codex_status", () => {
   test("status is a no-IO snapshot and reflects the latest milestone", async () => {
     const { conn, runs, threadId } = bridge();
     await runs.start("do the thing", "/repo");
-    const cmd = { type: "commandExecution", id: "c1", pluginId: null, scriptPath: null, command: "cargo test", cwd: "/repo", processId: null, source: "agent", status: "inProgress", commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null } as ThreadItem;
-    conn.emit({ emittedAtMs: 1500, method: "item/started", params: { item: cmd, threadId, turnId: "turn1", startedAtMs: 1500 } });
+    const cmd = { type: "commandExecution", id: "c1", pluginId: null, scriptPath: null, command: "cargo test", cwd: "/repo", processId: null, source: "agent", status: "completed", commandActions: [], aggregatedOutput: null, exitCode: 101, durationMs: null } as ThreadItem;
+    conn.emit({ emittedAtMs: 1500, method: "item/completed", params: { item: cmd, threadId, turnId: "turn1", completedAtMs: 1500 } });
     // Give the notification loop a tick to fold the event in.
     await Bun.sleep(1);
-    expect(runs.status(threadId)?.events.at(-1)).toEqual({ kind: "command", at: 1500, phase: "running", command: "cargo test", status: "inProgress" });
+    expect(runs.status(threadId)?.events.at(-1)).toEqual({ kind: "command", at: 1500, command: "cargo test", status: "completed", exitCode: 101 });
   });
 
-  test("beats pile up between polls and drain in order — an auto-approval is not clobbered", async () => {
+  test("beats pile up between polls and drain in order — a denied auto-approval is not clobbered", async () => {
     const { conn, runs, threadId } = bridge();
     await runs.start("do the thing", "/repo");
-    const cmd = { type: "commandExecution", id: "c1", pluginId: null, scriptPath: null, command: 'echo "hi"', cwd: "/repo", processId: null, source: "agent", status: "inProgress", commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null } as ThreadItem;
+    const cmd = { type: "commandExecution", id: "c1", pluginId: null, scriptPath: null, command: "curl x.com", cwd: "/repo", processId: null, source: "agent", status: "inProgress", commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null } as ThreadItem;
 
-    // Three milestones land back-to-back before any status poll: the command
-    // starting, the guardian silently auto-approving it, then it completing.
+    // Routine and significant notifications land back-to-back before any status
+    // poll: the command starting (routine), the guardian denying it, then it
+    // completing as declined. Only the denial and the failed command are events.
     conn.emit({ emittedAtMs: 1600, method: "item/started", params: { item: cmd, threadId, turnId: "turn1", startedAtMs: 1600 } });
-    conn.emit({ emittedAtMs: 1601, method: "item/autoApprovalReview/completed", params: { threadId, turnId: "turn1", startedAtMs: 1600, completedAtMs: 1601, reviewId: "r1", targetItemId: "c1", decisionSource: "agent", review: { status: "approved", riskLevel: "low", userAuthorization: "high", rationale: null }, action: { type: "command", source: "agent", command: 'echo "hi"', cwd: "/repo" } } as never });
-    conn.emit({ emittedAtMs: 1602, method: "item/completed", params: { item: cmd, threadId, turnId: "turn1", completedAtMs: 1602 } });
+    conn.emit({ emittedAtMs: 1601, method: "item/autoApprovalReview/completed", params: { threadId, turnId: "turn1", startedAtMs: 1600, completedAtMs: 1601, reviewId: "r1", targetItemId: "c1", decisionSource: "agent", review: { status: "denied", riskLevel: "high", userAuthorization: null, rationale: null }, action: { type: "command", source: "agent", command: "curl x.com", cwd: "/repo" } } as never });
+    conn.emit({ emittedAtMs: 1602, method: "item/completed", params: { item: { ...cmd, status: "declined" } as ThreadItem, threadId, turnId: "turn1", completedAtMs: 1602 } });
     await Bun.sleep(1);
 
-    // The middle event would be lost under a single overwritten slot; the drain
-    // hands back all three, oldest first — the auto-approval survives.
+    // The first event would be lost under a single overwritten slot; the drain
+    // hands back both, oldest first — the denial survives.
     expect(runs.hasPending(threadId)).toBe(true);
     expect(runs.drain(threadId)).toEqual([
-      { kind: "command", at: 1600, phase: "running", command: 'echo "hi"', status: "inProgress" },
-      { kind: "autoApproval", at: 1601, decision: "approved", risk: "low", action: 'echo "hi"' },
-      { kind: "command", at: 1602, phase: "ran", command: 'echo "hi"', status: "inProgress" },
+      { kind: "autoApproval", at: 1601, decision: "denied", risk: "high", action: "curl x.com" },
+      { kind: "command", at: 1602, command: "curl x.com", status: "declined" },
     ]);
     // Drained exactly once: a second poll has nothing left to deliver.
     expect(runs.hasPending(threadId)).toBe(false);
@@ -282,9 +282,9 @@ describe("the approval bridge — the anti-hang property", () => {
 
     // A notification arriving DURING the pending approval is still processed:
     // the notification loop was never stalled by the unanswered request.
-    conn.emit({ emittedAtMs: 1600, method: "item/started", params: { item: { type: "commandExecution", id: "c1", pluginId: null, scriptPath: null, command: "ls", cwd: "/repo", processId: null, source: "agent", status: "inProgress", commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null } as ThreadItem, threadId, turnId: "turn1", startedAtMs: 1600 } });
+    conn.emit({ emittedAtMs: 1600, method: "item/completed", params: { item: { type: "commandExecution", id: "c1", pluginId: null, scriptPath: null, command: "ls", cwd: "/repo", processId: null, source: "agent", status: "failed", commandActions: [], aggregatedOutput: null, exitCode: 2, durationMs: null } as ThreadItem, threadId, turnId: "turn1", completedAtMs: 1600 } });
     await Bun.sleep(1);
-    expect(runs.status(threadId)?.events.at(-1)).toMatchObject({ kind: "command", phase: "running", command: "ls" });
+    expect(runs.status(threadId)?.events.at(-1)).toMatchObject({ kind: "command", status: "failed", command: "ls" });
 
     // The user answers; the decision flows back to Codex as the reply.
     elicitation.answer("acceptForSession");
@@ -461,11 +461,41 @@ describe("long-poll (waitForUpdate) — event-driven status", () => {
     const poll = runs.waitForUpdate(threadId, since, 60_000);
     conn.emit({
       emittedAtMs: 1600,
-      method: "item/started",
-      params: { item: { type: "commandExecution", id: "c1", pluginId: null, scriptPath: null, command: "ls", cwd: "/repo", processId: null, source: "agent", status: "inProgress", commandActions: [], aggregatedOutput: null, exitCode: null, durationMs: null } as ThreadItem, threadId, turnId: "turn1", startedAtMs: 1600 },
+      method: "item/completed",
+      params: { item: { type: "commandExecution", id: "c1", pluginId: null, scriptPath: null, command: "ls", cwd: "/repo", processId: null, source: "agent", status: "failed", commandActions: [], aggregatedOutput: null, exitCode: 2, durationMs: null } as ThreadItem, threadId, turnId: "turn1", completedAtMs: 1600 },
     });
     const { snapshot } = await poll;
-    expect(snapshot?.events.at(-1)).toMatchObject({ kind: "command", phase: "running", command: "ls" });
+    expect(snapshot?.events.at(-1)).toMatchObject({ kind: "command", status: "failed", command: "ls" });
+  });
+
+  test("waitForEvents sleeps through event-less telemetry bumps and wakes on an event", async () => {
+    const { conn, runs, threadId } = bridge();
+    await runs.start("do it", "/repo");
+    runs.drain(threadId);
+
+    let woke = false;
+    const poll = runs.waitForEvents(threadId, 60_000).then(() => { woke = true; });
+    // Token usage and rate limits bump the revision but append no event.
+    conn.emit({ emittedAtMs: 1700, method: "thread/tokenUsage/updated", params: { threadId, turnId: "turn1", tokenUsage: { total: { totalTokens: 10, inputTokens: 10, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 }, last: { totalTokens: 10, inputTokens: 10, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 }, modelContextWindow: 100 } } as never });
+    runs.bump(threadId);
+    await Bun.sleep(5);
+    expect(woke).toBe(false);
+
+    const started = Date.now();
+    conn.emit(turnCompleted(threadId, "all done"));
+    await poll;
+    expect(Date.now() - started).toBeLessThan(1_000);
+    expect(runs.drain(threadId).at(-1)).toMatchObject({ kind: "result", text: "all done" });
+  });
+
+  test("waitForEvents returns after the timeout on a quiet run", async () => {
+    const { runs, threadId } = bridge();
+    await runs.start("do it", "/repo");
+    runs.drain(threadId);
+    const started = Date.now();
+    await runs.waitForEvents(threadId, 40);
+    expect(Date.now() - started).toBeGreaterThanOrEqual(30);
+    expect(runs.hasPending(threadId)).toBe(false);
   });
 
   test("returns immediately when the run is already terminal", async () => {
