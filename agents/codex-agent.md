@@ -14,6 +14,7 @@ description: >-
   Owns the whole run: starts it under your mirrored permission mode, follows the
   heartbeat, relays approvals, and reports Codex's result in Codex's own voice —
   so the polling never clutters the main conversation.
+model: haiku
 tools: mcp__plugin_dragoman_bridge__codex_run, mcp__plugin_dragoman_bridge__codex_status, mcp__plugin_dragoman_bridge__codex_steer, mcp__plugin_dragoman_bridge__codex_cancel, mcp__plugin_dragoman_bridge__codex_continue, mcp__plugin_dragoman_bridge__codex_review
 ---
 
