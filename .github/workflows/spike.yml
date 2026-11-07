@@ -1,0 +1,92 @@
+# Throwaway: step 0's spikes 3 and 4 (PLAN.md). Deleted once answered.
+name: Spike
+
+on:
+  push:
+    branches: [go-port]
+    paths: [spike/**, .github/workflows/spike.yml]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: jdx/mise-action@v5
+      - name: Cross-compile darwin/arm64 and linux/amd64, zip with the launcher
+        run: |
+          cd spike
+          mkdir -p stage/bin/darwin-arm64 stage/bin/linux-x86_64
+          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 mise exec -- go build -trimpath -ldflags "-s -w" -o stage/bin/darwin-arm64/dragoman .
+          CGO_ENABLED=0 GOOS=linux GOARCH=amd64 mise exec -- go build -trimpath -ldflags "-s -w" -o stage/bin/linux-x86_64/dragoman .
+          cp launcher stage/bin/dragoman
+          (cd stage && zip -q -9 -r ../plugin.zip .)
+          ls -la stage/bin/*/ plugin.zip
+      - uses: actions/upload-artifact@v7
+        with:
+          name: plugin
+          path: spike/plugin.zip
+
+  mac:
+    runs-on: macos-latest
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: plugin
+      - name: Unpack and run the launcher, complete an MCP initialize
+        run: |
+          uname -a
+          mkdir plugin && cd plugin && unzip -q ../plugin.zip
+          ls -la@ bin bin/darwin-arm64 || true
+          xattr -l bin/darwin-arm64/dragoman || true
+          codesign -dv bin/darwin-arm64/dragoman 2>&1 || true
+          reply=$(printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' | bin/dragoman serve)
+          echo "$reply"
+          echo "$reply" | grep -q '"protocolVersion"'
+      - name: Install codex
+        run: npm i -g @openai/codex && codex --version
+      - name: command/exec logged out (empty CODEX_HOME)
+        run: |
+          mkdir -p "$RUNNER_TEMP/emptyhome" "$HOME/spike-cwd"
+          {
+            printf '%s\n' '{"id":1,"method":"initialize","params":{"clientInfo":{"name":"spike","title":"spike","version":"0"},"capabilities":{"experimentalApi":true}}}'
+            printf '%s\n' '{"method":"initialized"}'
+            printf '%s\n' "{\"id\":2,\"method\":\"command/exec\",\"params\":{\"command\":[\"echo\",\"hello\"],\"cwd\":\"$HOME/spike-cwd\",\"sandboxPolicy\":{\"type\":\"readOnly\"}}}"
+            printf '%s\n' "{\"id\":3,\"method\":\"command/exec\",\"params\":{\"command\":[\"touch\",\"$HOME/spike-should-fail\"],\"cwd\":\"$HOME/spike-cwd\",\"sandboxPolicy\":{\"type\":\"readOnly\"}}}"
+            printf '%s\n' "{\"id\":4,\"method\":\"command/exec\",\"params\":{\"command\":[\"touch\",\"$HOME/spike-cwd/in.txt\"],\"cwd\":\"$HOME/spike-cwd\",\"sandboxPolicy\":{\"type\":\"workspaceWrite\",\"writableRoots\":[],\"networkAccess\":false,\"excludeTmpdirEnvVar\":false,\"excludeSlashTmp\":false}}}"
+            sleep 15
+          } | CODEX_HOME="$RUNNER_TEMP/emptyhome" codex app-server | cut -c1-400
+          ls -la "$HOME/spike-should-fail" "$HOME/spike-cwd/in.txt" || true
+
+  linux:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: plugin
+      - name: Unpack and run the launcher
+        run: |
+          mkdir plugin && cd plugin && unzip -q ../plugin.zip
+          printf '%s\n' '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{},"clientInfo":{"name":"ci","version":"0"}}}' | bin/dragoman serve
+      - name: Install codex
+        run: npm i -g @openai/codex && codex --version
+      - name: command/exec logged out (empty CODEX_HOME)
+        run: |
+          mkdir -p "$RUNNER_TEMP/emptyhome" "$HOME/spike-cwd"
+          {
+            printf '%s\n' '{"id":1,"method":"initialize","params":{"clientInfo":{"name":"spike","title":"spike","version":"0"},"capabilities":{"experimentalApi":true}}}'
+            printf '%s\n' '{"method":"initialized"}'
+            printf '%s\n' "{\"id\":2,\"method\":\"command/exec\",\"params\":{\"command\":[\"echo\",\"hello\"],\"cwd\":\"$HOME/spike-cwd\",\"sandboxPolicy\":{\"type\":\"readOnly\"}}}"
+            printf '%s\n' "{\"id\":3,\"method\":\"command/exec\",\"params\":{\"command\":[\"touch\",\"$HOME/spike-should-fail\"],\"cwd\":\"$HOME/spike-cwd\",\"sandboxPolicy\":{\"type\":\"readOnly\"}}}"
+            sleep 15
+          } | CODEX_HOME="$RUNNER_TEMP/emptyhome" codex app-server | cut -c1-400
+          ls -la "$HOME/spike-should-fail" || true
