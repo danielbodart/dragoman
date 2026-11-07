@@ -1,6 +1,7 @@
 # Dragoman in Go — plan
 
-> **Status:** in progress on `go-port`: step 0 answered (below), steps 1 to 3 done. The port follows the path Treesinger, Portical and
+> **Status:** steps 0 to 4 done on the `go-port` branch, CI green on Linux
+> and macOS; see "Where it stands" at the end. Not merged. The port follows the path Treesinger, Portical and
 > Tidewaiter took on 23 October 2026: first a faithful port next to the
 > TypeScript, its tests ported one to one; then the TypeScript removed, with
 > the port made strict where JavaScript happened to be lenient. After that it
@@ -311,3 +312,51 @@ scripted elicitation fake ports directly. A `Container` struct, wired in
 - **macOS has never been tested.** CI has only ever run on Linux, so step 3's
   macOS job is new coverage, not a check for regressions. Expect differences between Seatbelt and Linux's sandbox to turn
   up there rather than as a result of the port.
+
+## Where it stands (7 November 2026)
+
+Steps 0 to 4 are done on `go-port`. CI runs on `workflow_dispatch` there
+(no pull request, as the repo is trunk-based); its release job is gated on the
+default branch and is skipped on `go-port`.
+
+- **Parity.** `tools/list` and `initialize` are identical between the two
+  servers. For 7 settings fixtures × 9 postures, the mirror's policy, the
+  managed config block, the rules file and the isolated home's layout
+  (symlinks included) are identical. The live-mode file the TypeScript hook
+  writes is taken by the Go server, and the other way round. A thread started
+  by the TypeScript build was continued by the Go build from the shared store,
+  and recalled its token; and the other way round.
+- **Live tests.** The 7 model-free ones pass on Linux (local and CI) and
+  macOS (CI). The 12 model-turn ones passed once, locally, against
+  codex-cli 0.166.0: approval ×3, continue and review, execpolicy ×2, the
+  filesystem write-carve, long-poll (8.3s, 11 wakes, every one an event),
+  profile, webfetch ×2.
+- **Sizes.** Each binary is about 3.6 MB; the plugin zip with all three is
+  4.8 MB (the old `bun --compile` was 116 MB, the bundle 280 KB plus bun).
+
+**Behaviour that differs from the TypeScript, on purpose:**
+- An approval waits as long as the human takes (the TypeScript SDK timed out
+  after 60s and errored back to Codex).
+- A tool's own arguments are strict: a non-string `prompt`, `cwd`, `handle`,
+  ... fails the call naming the field (JavaScript stringified it). A missing
+  one still gets the tool's own message.
+- A failure inside a tool (codex won't start, thread/start fails) is an MCP
+  tool result with `isError`, not a JSON-RPC error; a thread/start reply with
+  no thread id fails naming what codex sent. A failed provisioning cleans up
+  its home and process (the TypeScript leaked both).
+- A permission mode Dragoman doesn't know gets `default`'s posture with one
+  warning on stderr (it was silent).
+- `hook check` (SessionStart) checks for `codex`, not bun, and exits 0 with
+  its warning as additional context.
+- A release happens only when something in `RELEASE_PATHS` changed (it was
+  every push to main).
+
+**Left for the owner before the swap:**
+- Run the Go build as the plugin for a few days of normal use (a local
+  `directory` marketplace from `dist/plugin`), as step 1 planned.
+- On native Windows, Claude Code spawns `bin/dragoman` directly for the MCP
+  server, and a `#!/bin/sh` script cannot be exec'd there, so the bridge shows
+  as failed to start rather than printing the WSL message; the hooks, which
+  Claude Code runs through Git Bash, do get the launcher's silent no-op.
+- After merge, nix-config drops `pkgs.bun` from
+  `features/dragoman/home.nix`; its build-time fetch of the zip is unchanged.
