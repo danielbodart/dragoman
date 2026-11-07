@@ -1,0 +1,109 @@
+# Every dependency moves once a week, together, and only if everything CI
+# tests still passes with the lot:
+#
+#   - mise.toml's tools, each to the latest patch of the minor it pins (a new
+#     minor moves by hand);
+#   - the Go modules, to their latest versions.
+#
+# Sunday 21:23 UTC is the window every one of danielbodart's repos shares.
+#
+# The changes are committed straight to main, no pull request, named by what
+# moved. A push with GITHUB_TOKEN starts no workflow, so when something a
+# release is built from moved (RELEASE_PATHS in mise.toml), this dispatches CI
+# with `release`, which tests it again on both platforms and publishes.
+name: Weekly update
+
+on:
+  schedule:
+    - cron: "23 21 * * 0"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write
+
+# Shared with anything else that commits to main.
+concurrency:
+  group: update
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    env:
+      BRANCH: ${{ github.ref_name }}
+    steps:
+      # The whole history and its tags, for the version and the release diff.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - uses: jdx/mise-action@v5
+
+      # Each step adds a line to moved.txt per thing that moved.
+      - name: mise tools
+        run: |
+          sed -n '/^\[tools\]/,/^\[/s/^\([A-Za-z0-9_-]*\) = "\([0-9][0-9.]*\)"$/\1 \2/p' mise.toml |
+            while read -r tool pinned; do
+              latest=$(mise latest "$tool@${pinned%.*}")
+              if [ -n "$latest" ] && [ "$latest" != "$pinned" ]; then
+                sed -i "s/^$tool = \"$pinned\"$/$tool = \"$latest\"/" mise.toml
+                echo "$tool $pinned -> $latest" >> moved.txt
+              fi
+            done
+          mise install
+
+      # By mise's Go, the one just installed if it moved. GOTOOLCHAIN=local: a
+      # module that wants a newer Go than that fails here, rather than
+      # quietly moving go.mod past the toolchain mise pins.
+      - name: Go modules
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          mise exec -- go get -u ./...
+          mise exec -- go mod tidy
+          git diff -U0 go.mod |
+            awk '/^\+[^+]/ { sub(/^\+(require)?[ \t]*/, ""); if ($1 != "" && $1 != "go" && $1 != "toolchain" && $1 != "(" && $1 != ")") print $1 }' >> moved.txt
+
+      - name: Anything moved?
+        id: moved
+        run: |
+          if [ -s moved.txt ]; then
+            echo "value=$(paste -sd, moved.txt | sed 's/,/, /g')" >> "$GITHUB_OUTPUT"
+          else
+            echo "Nothing moved."
+          fi
+
+      # What CI's Linux jobs test, with everything that moved. macOS is tested
+      # by the CI run the release dispatches.
+      - name: Check
+        if: steps.moved.outputs.value
+        run: mise run check
+      - name: Dist
+        if: steps.moved.outputs.value
+        run: mise run dist
+      - name: Run the plugin from the zip
+        if: steps.moved.outputs.value
+        run: ./run smoke
+
+      - name: Commit and push
+        if: steps.moved.outputs.value
+        env:
+          MOVED: ${{ steps.moved.outputs.value }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add mise.toml go.mod go.sum
+          git commit -qm "Weekly update: $MOVED"
+          git pull -q --rebase origin "$BRANCH"
+          git push -q origin "HEAD:$BRANCH"
+
+      - name: Release
+        if: steps.moved.outputs.value
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if mise run release-due; then gh workflow run ci.yml --ref "$BRANCH" -f release=true; fi

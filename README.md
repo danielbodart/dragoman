@@ -132,6 +132,51 @@ mise run dist                                              # or the full plugin 
 model-free ones by default (`command/exec` in the sandbox), every one with
 `DRAGOMAN_MODEL_TESTS=1`.
 
+## Channels
+
+- **Claude Code plugin**: `/plugin marketplace add danielbodart/dragoman`,
+  then `/plugin install dragoman@danielbodart`. The marketplace points at the
+  latest release's `dragoman-plugin.zip`, one archive carrying a static
+  binary for Linux x86_64, Linux aarch64 and macOS on Apple silicon, with the
+  launcher that picks one. Not Windows (use WSL) and not Intel Macs.
+- **GitHub release**: `dragoman-plugin.zip` and `SHA256SUMS` on each
+  [release](https://github.com/danielbodart/dragoman/releases), with a
+  cosign keyless signature of each (`cosign verify-blob --bundle
+  <asset>.sigstore.json --certificate-identity-regexp
+  '^https://github.com/danielbodart/dragoman/'
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+  <asset>`).
+- **Nix**: nix-config fetches the release zip at build time; there is no
+  flake here.
+
+Updated weekly (Sunday 21:23 UTC): mise's tools to the latest patch of their
+minor, and the Go modules, committed straight to `main` once the checks pass.
+A release is cut when the Go source, `go.mod`/`go.sum`, `mise.toml`, `./run`,
+`MAJOR`, `packaging/`, `skills/`, `agents/`, the plugin manifest or the
+protocol schema changed since the last release (`RELEASE_PATHS` in
+`mise.toml`), and only once `mise run check` and the plugin zip, unpacked and
+run with the model-free live tests, pass on both Linux and macOS.
+
+## Releases
+
+**`main` is production.** Every push to it that changes what a release is
+built from publishes, once CI passes on both platforms: there are no manual
+tags and no release branches. The version is *derived from the repository*,
+not stored in it: `major.commit-count.ci-run` (see `./run`). The major is the
+one deliberate part (in `MAJOR`); the minor only ever rises and names exactly
+one commit; the patch separates two builds of the same commit. `dragoman
+version` reports what a build calls itself (`development` from source). Each
+release is a GitHub Release `v<version>`, its notes the commits since the
+last one, and a commit pointing `.claude-plugin/marketplace.json` at it. A
+pull request builds and tests everything but publishes nothing.
+
+```sh
+./run version   # what this checkout would publish as
+./run build     # compile dist/dragoman with the version baked in
+./run dist      # every platform's binary and the plugin zip, into dist/
+./run smoke     # the zip from dist/, unpacked and run through its launcher here
+```
+
 ## License
 
 Copyright 2026 Daniel Bodart. Licensed under the [Apache License 2.0](LICENSE).

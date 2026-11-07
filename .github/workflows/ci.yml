@@ -1,5 +1,14 @@
 name: CI
 
+# Every push to main, and every dispatch, is tested on Linux and macOS:
+# mise's checks on both, the plugin zip built once on Linux, and that same zip
+# unpacked and run on both (on macOS, the darwin binary cross-built on Linux),
+# with the live tests that need no model (codex's command/exec in its
+# sandbox: Landlock/bubblewrap on Linux, Seatbelt on macOS). A release waits
+# for all of it, and is made only from main, only when something it is built
+# from (RELEASE_PATHS in mise.toml) changed since the last release tag, or a
+# dispatch asks for one with `release`. The weekly update dispatches it so.
+
 on:
   push:
     branches: [main]
@@ -9,35 +18,179 @@ on:
       - .claude-plugin/marketplace.json
   pull_request:
   workflow_dispatch:
+    inputs:
+      release:
+        description: Release even if nothing in RELEASE_PATHS changed since the last release (main only)
+        type: boolean
+        default: false
 
+# Least privilege for the built-in token: read-only, widened only on the job
+# that publishes.
 permissions:
-  contents: write
+  contents: read
 
-# Serialize runs on the same ref so release jobs never race on the
-# marketplace-pointer push. cancel-in-progress:false → queue, don't cancel,
-# so an in-flight release finishes publishing before the next one starts.
+# Serialize runs on the same ref so releases never race on the
+# marketplace-pointer push: queue, don't cancel, so an in-flight release
+# finishes before the next one starts.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+# bash, so GitHub runs every step with -eo pipefail.
+defaults:
+  run:
+    shell: bash
+
 jobs:
-  ci:
-    runs-on: ubuntu-latest
+  check:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v7
-        # Full history: version() derives the minor from the commit
-        # count, which a shallow clone gets wrong (and the script refuses).
-        # A token that can push is needed for the marketplace-pointer commit.
+      # mise.toml pins Go, for CI and for anyone working on this locally.
+      - uses: jdx/mise-action@v5
+      - run: mise run check
+      # The race detector needs cgo, which the release binaries don't use;
+      # the hosted Linux runner has a C compiler.
+      - name: Race detector
+        if: runner.os == 'Linux'
+        run: CGO_ENABLED=1 mise exec -- go test -race -count=1 -timeout 5m ./...
+
+  # Everything a release ships, built once, by mise's Go: the jobs below and
+  # the release all use these bytes.
+  dist:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.value }}
+      release: ${{ steps.due.outputs.value }}
+    steps:
+      # The whole history and its tags: the version's minor is the commit
+      # count, which ./run refuses to compute from a shallow clone, and
+      # whether to release is a diff from the last release tag.
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: jdx/mise-action@v5
+      - run: mise run dist
+
+      - name: Version
+        id: version
+        run: echo "value=$(cat dist/version)" >> "$GITHUB_OUTPUT"
+
+      - name: Release?
+        id: due
+        env:
+          FORCE: ${{ inputs.release }}
+        run: |
+          if [ "$FORCE" = true ] || mise run release-due; then
+            echo "value=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Tarred, because an artifact does not keep the binaries' mode.
+      - run: tar -cf dist.tar dist
+      - uses: actions/upload-artifact@v7
+        with:
+          name: dist
+          path: dist.tar
+
+  # The zip from dist, unpacked and run through its launcher on each
+  # platform; then codex installed, logged out, and the live tests that need
+  # no model run against it.
+  platform:
+    needs: dist
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+      - run: tar -xf dist.tar
+      - name: Run the plugin from the zip
+        run: ./run smoke
+      - uses: jdx/mise-action@v5
+      - name: Install codex
+        run: npm install -g @openai/codex && codex --version
+      - name: Live tests (no model)
+        run: mise run integration -- -v
+
+  release:
+    runs-on: ubuntu-latest
+    needs: [check, dist, platform]
+    if: >-
+      github.event_name != 'pull_request'
+      && github.ref_name == github.event.repository.default_branch
+      && needs.dist.outputs.release == 'true'
+    permissions:
+      # The release, and the marketplace-pointer commit to main.
+      contents: write
+      # cosign's keyless signing: the run's OIDC identity is the signer.
+      id-token: write
+    env:
+      VERSION: ${{ needs.dist.outputs.version }}
+    steps:
+      # The whole history and its tags, for the notes: the commits since the
+      # last release.
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v8
+        with:
+          name: dist
+      - run: tar -xf dist.tar
       - uses: jdx/mise-action@v5
 
-      # Everything real lives in mise tasks, so local dev runs the same steps.
-      - run: mise run ci
+      # Each asset gets a sigstore bundle beside it: `cosign verify-blob
+      # --bundle <asset>.sigstore.json` proves this workflow, on this
+      # repository, built it.
+      - name: Sign
+        run: |
+          for f in dist/release/*; do
+            mise exec -- cosign sign-blob --yes --bundle "$f.sigstore.json" "$f"
+          done
 
-      - name: Release
-        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: mise run release
+      # A re-run has the same run number and so the same version, so the
+      # release may already exist: its assets are replaced rather than the
+      # job failing.
+      - name: Publish
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tag="v$VERSION"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/release/* --clobber
+          else
+            # The notes are the commits since the last release, without the
+            # marketplace-pointer commits.
+            {
+              if prev=$(git describe --tags --abbrev=0 --match 'v*' "$GITHUB_SHA" 2>/dev/null); then
+                git log "$prev..$GITHUB_SHA" --pretty='- %s (%h)' | grep -v '^- release: point marketplace at ' || true
+              else
+                git log -1 --pretty='- %s (%h)' "$GITHUB_SHA"
+              fi
+              echo
+              echo "Install: \`/plugin marketplace add danielbodart/dragoman\`, then \`/plugin install dragoman@danielbodart\`."
+            } > notes.md
+            gh release create "$tag" dist/release/* --target "$GITHUB_SHA" --title "$tag" --latest --notes-file notes.md
+          fi
+
+      # Point the marketplace catalog at the new release. A concurrent push
+      # can win the race; the next release re-points, so a failed push is a
+      # warning, not a failure.
+      - name: Point the marketplace at it
+        run: |
+          ./run marketplace
+          if git diff --quiet .claude-plugin/marketplace.json; then
+            echo "marketplace.json already current"; exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add .claude-plugin/marketplace.json
+          git commit -m "release: point marketplace at v$VERSION [skip ci]"
+          git push origin HEAD:main || echo "::warning::marketplace pointer push raced; next release will re-point"

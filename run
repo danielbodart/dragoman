@@ -1,7 +1,7 @@
 #!/bin/sh
 # The one place Dragoman's build is defined, so CI runs the same commands a
 # developer does. mise.toml's tasks call it:
-# ./run <version|lint|test|check|build|dist|integration|regen-protocol|release-due|marketplace>.
+# ./run <version|lint|test|check|build|dist|integration|smoke|regen-protocol|release-due|marketplace>.
 set -eu
 
 cd "$(dirname "$0")"
@@ -116,6 +116,39 @@ dist() {
   echo "built dist $v"
 }
 
+# The plugin zip from dist/, unpacked as Claude Code unpacks it, and driven
+# through its launcher on this machine: an MCP session (initialize,
+# tools/list, the diagnostics tool), the posture hook, and the version. On
+# macOS this is the darwin binary cross-built on Linux, from the same zip.
+smoke() {
+  v=$(cat dist/version)
+  root=$(mktemp -d)
+  unzip -q "dist/release/$NAME-plugin.zip" -d "$root/plugin"
+  launcher="$root/plugin/bin/$NAME"
+  said=$("$launcher" version)
+  [ "$said" = "$v" ] || die "the plugin's binary says '$said' but dist is $v"
+  grep -q "\"version\": \"$v\"" "$root/plugin/.claude-plugin/plugin.json" || die "plugin.json is not stamped $v"
+
+  replies=$(
+    {
+      echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25","capabilities":{"elicitation":{}},"clientInfo":{"name":"smoke","version":"0"}}}'
+      echo '{"jsonrpc":"2.0","method":"notifications/initialized"}'
+      echo '{"jsonrpc":"2.0","id":2,"method":"tools/list"}'
+      echo '{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"diagnostics","arguments":{}}}'
+    } | CLAUDE_CONFIG_DIR="$root/claude" CLAUDE_PROJECT_DIR="$root" "$launcher" serve
+  )
+  echo "$replies" | grep -q '"id":1,"result":{"capabilities":{"tools":{}},"protocolVersion":"2025-11-25"' || die "no initialize reply: $replies"
+  for tool in codex_run codex_status codex_steer codex_cancel codex_continue codex_review diagnostics; do
+    echo "$replies" | grep -q "\"name\":\"$tool\"" || die "tools/list has no $tool"
+  done
+  echo "$replies" | grep -q "\"id\":3,\"result\":{\"content\".*\"version\":\"$v\"" || die "no diagnostics reply: $replies"
+
+  echo '{"tool_use_id":"toolu_smoke","permission_mode":"plan"}' | XDG_RUNTIME_DIR="$root/rt" "$launcher" hook posture
+  [ "$(cat "$root/rt/dragoman/live-mode/toolu_smoke")" = plan ] || die "the posture hook recorded nothing"
+  rm -rf "$root"
+  echo "the plugin runs on $(uname -sm): $v"
+}
+
 # The protocol bindings, from the installed codex: its JSON Schema, then the
 # Go generated from it. The `git diff` after a codex upgrade is the protocol
 # change.
@@ -160,11 +193,11 @@ marketplace() {
 command=${1:-build}
 [ $# -gt 0 ] && shift
 case $command in
-  version|lint|test|check|build|dist|integration|marketplace) "$command" "$@" ;;
+  version|lint|test|check|build|dist|integration|smoke|marketplace) "$command" "$@" ;;
   regen-protocol) regen_protocol ;;
   release-due) release_due ;;
   *)
-    echo "Error: '$command' is not a command. Try: version, lint, test, check, build, dist, integration, regen-protocol, release-due, marketplace" >&2
+    echo "Error: '$command' is not a command. Try: version, lint, test, check, build, dist, integration, smoke, regen-protocol, release-due, marketplace" >&2
     exit 2
     ;;
 esac
