@@ -29,3 +29,4 @@ test/integration/.state/
 # Local Claude Code state (per-developer settings, session worktrees)
 .claude/settings.local.json
 .claude/worktrees/
+internal/integration/.state/

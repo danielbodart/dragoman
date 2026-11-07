@@ -163,13 +163,13 @@ func (r *Runs) seedAccountLimits(conn codex.Conn) {
 // writable roots, or the danger sandbox for bypassPermissions (sandbox and a
 // profile are mutually exclusive).
 type threadParams struct {
-	Cwd                   string                       `json:"cwd"`
-	ApprovalPolicy        protocol.AskForApproval      `json:"approvalPolicy"`
-	ApprovalsReviewer     *protocol.ApprovalsReviewer  `json:"approvalsReviewer,omitempty"`
-	Config                map[string]any               `json:"config"`
-	Permissions           *string                      `json:"permissions,omitempty"`
-	RuntimeWorkspaceRoots []protocol.AbsolutePathBuf   `json:"runtimeWorkspaceRoots,omitempty"`
-	Sandbox               *protocol.SandboxMode        `json:"sandbox,omitempty"`
+	Cwd                   string                      `json:"cwd"`
+	ApprovalPolicy        protocol.AskForApproval     `json:"approvalPolicy"`
+	ApprovalsReviewer     *protocol.ApprovalsReviewer `json:"approvalsReviewer,omitempty"`
+	Config                map[string]any              `json:"config"`
+	Permissions           *string                     `json:"permissions,omitempty"`
+	RuntimeWorkspaceRoots []protocol.AbsolutePathBuf  `json:"runtimeWorkspaceRoots,omitempty"`
+	Sandbox               *protocol.SandboxMode       `json:"sandbox,omitempty"`
 }
 
 func mirrorParams(policy posture.Policy, settings posture.Effective, cwd string) threadParams {

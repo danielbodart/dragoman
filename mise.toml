@@ -14,8 +14,20 @@ cosign = "3.0.6"
 run = "bun install --frozen-lockfile"
 
 [tasks.check]
-depends = ["install"]
+depends = ["install", "go-check"]
 run = "bunx tsc --noEmit"
+
+# The Go port, beside the TypeScript until it replaces it: gofmt, vet, the
+# generated protocol up to date with the schema, and the unit tests.
+[tasks.go-check]
+run = '''
+set -e
+unformatted=$(gofmt -l main.go internal parity)
+[ -z "$unformatted" ] || { echo "not gofmt'd: $unformatted" >&2; exit 1; }
+go vet ./...
+go run ./internal/protocol/gen -check
+go test -count=1 ./...
+'''
 
 [tasks.test]
 depends = ["install"]
