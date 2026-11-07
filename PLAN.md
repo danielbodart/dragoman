@@ -1,6 +1,6 @@
 # Dragoman in Go — plan
 
-> **Status:** proposed. The port follows the path Treesinger, Portical and
+> **Status:** in progress on `go-port`: step 0 answered (below), steps 1 to 3 done. The port follows the path Treesinger, Portical and
 > Tidewaiter took on 23 October 2026: first a faithful port next to the
 > TypeScript, its tests ported one to one; then the TypeScript removed, with
 > the port made strict where JavaScript happened to be lenient. After that it
@@ -107,6 +107,73 @@ Each spike answers one question with a small throwaway program.
    suite CI can run (see CI).
 4. **gokit `logx` on darwin:** confirm it builds and runs. Dragoman needs none
    of the Linux-only packages (`dbusx`, `sockdiag`).
+
+### Step 0 — answers (7 November 2026)
+
+1. **Go MCP SDK: no; Dragoman has its own MCP server.** go-sdk v1.8.0 can
+   send `elicitation/create` from any goroutine, handles concurrent
+   `tools/call`s (a long-poll does not hold up another call), and passes
+   `_meta` and `structuredContent` through. But it refuses server-initiated
+   elicitation, sampling and roots whenever the client *requests* protocol
+   2026-07-28 or later (SEP-2322: those must ride a handler's
+   `InputRequiredResult`), and it checks the version the client asked for,
+   not the one negotiated: a 2026-07-28 client is refused even after
+   `initialize` negotiates it down to 2025-11-25. Claude Code 2.1.316 asks for
+   2025-11-25 today, so the SDK would work until Claude Code moves, and then
+   every approval would fail. Under 2026-07-28 it also adds `_meta.serverInfo`
+   and `resultType` to every result. So `internal/mcp` is the plan's fallback:
+   ~300 lines of JSON-RPC over stdio (`initialize`, `ping`, `tools/list`,
+   `tools/call`, and `elicitation/create` out), each request on its own
+   goroutine. It answers a client's version if it speaks it (2025-11-25 back
+   to 2024-10-07, the TypeScript SDK's list) and otherwise its newest, never a
+   refusal. It reads the client's elicitation capability as the TypeScript SDK
+   does (`form`, or neither `form` nor `url`) and sends `mode: "form"` as it
+   does. No dependency, and a smaller binary.
+2. **Protocol bindings: a generator of our own, `internal/protocol/gen`.** It
+   reads `codex_app_server_protocol.schemas.json` (the bundle with v1 at the
+   top and v2 under `definitions.v2`) and writes `protocol_gen.go` for 31
+   roots and the 281 types they reach. Optional or nullable fields are
+   pointers with `omitempty` (nullable-but-required ones send `null`); enums
+   are open string types with constants; a `oneOf` is a struct with a pointer
+   per variant, told apart by the property every variant pins to one value
+   (`type`, `method`) or by its one key, with plain-string arms in `Value`.
+   Every union keeps `Raw` and its discriminator, so an unknown variant
+   decodes with its type name, and marshals its own discriminator. A shape it
+   cannot model becomes `json.RawMessage`. Dragoman reads Codex's messages
+   with `protocol.Decode`, which ignores `json.UnmarshalTypeError`, and the
+   generated unions swallow a variant's type errors, so a field whose type
+   changes is left zero rather than losing the message. Where Dragoman needs
+   one or two fields of a large reply (thread/start's thread id and model, a
+   turn id, rate-limit windows as floats) it decodes just those.
+   Notifications and server requests stay `{method, params}` envelopes routed
+   by method; the generated `ServerNotification`/`ServerRequest` unions are
+   not used, which keeps ~80 notification types out of the closure.
+   `mise run check` runs the generator with `-check`.
+3. **macOS: yes, as planned.** On `macos-latest` (Darwin 25.6, arm64), a
+   darwin/arm64 binary cross-built on ubuntu with `CGO_ENABLED=0` is
+   `adhoc,linker-signed`, has no quarantine attribute after `unzip`, runs
+   through a `sh` launcher picking it by `uname -sm`, and answers MCP
+   `initialize`. `command/exec` runs logged out (empty `CODEX_HOME`) on both
+   macOS (Seatbelt) and ubuntu (bubblewrap), with the read-only sandbox
+   refusing a write in `$HOME`, so CI runs the model-free integration tests on
+   both. One Seatbelt difference showed already: a `workspaceWrite`
+   `command/exec` with `writableRoots: []` refused a write in its own `cwd` on
+   macOS. (Locally, `codex` under chase ignores `CODEX_HOME` and has no user
+   namespaces; `DRAGOMAN_CODEX_COMMAND="codex-raw app-server"` runs the
+   integration tests against the real binary.)
+4. **gokit on darwin: yes.** `logx` (and `environ`, `atomicfile`, which the
+   port also uses) build and run there.
+
+**Correction to step 3:** of the integration tests, only `sandbox` (6) and
+filesystem's denyRead test use `command/exec` alone. Filesystem's
+write-carve, `execpolicy` and `profile` spend a model turn like `approval`,
+`continue-review`, `longpoll` and `webfetch`. The model-turn tests also
+need `DRAGOMAN_MODEL_TESTS=1`, so CI can never spend one.
+
+**Found while porting:** the TypeScript SDK gives up on an unanswered
+`elicitation/create` after its default 60s request timeout, so an approval
+left longer than a minute errors back to Codex. The Go server waits as long
+as the human does, as the design says it should.
 
 ## Step 1 — port next to the TypeScript
 
