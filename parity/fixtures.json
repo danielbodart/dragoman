@@ -1,9 +1,0 @@
-[
-  {},
-  {"defaultMode": "acceptEdits"},
-  {"allow": ["Bash(npm run test:*)", "WebFetch(domain:example.com)", "Read(/x)", "Bash"], "deny": ["Bash(git push:*)", "Bash(curl:*)"]},
-  {"sandboxEnabled": true},
-  {"sandboxEnabled": true, "allowedDomains": ["a.com"], "deniedDomains": ["b.com"], "strictAllowlist": true},
-  {"sandboxEnabled": true, "denyRead": ["/s", "**/*.env", "  "], "denyWrite": ["/s", "/ro"], "allowWrite": ["/out", "rel/dir"], "allowRead": ["/in"], "additionalDirectories": ["/data"]},
-  {"defaultMode": "some-future-mode", "allow": ["Bash(weird\"tok:*)"]}
-]

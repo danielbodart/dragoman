@@ -115,10 +115,12 @@ func (s *Server) Serve(ctx context.Context, in io.Reader, out io.Writer) error {
 			break
 		}
 	}
-	// Not waiting for calls in flight: a codex_status may be parked for
-	// another 90s, and the process should exit when Claude Code closes the
-	// pipe.
+	// Claude Code closed the pipe: cancel the calls in flight (a parked
+	// codex_status returns at once), fail any elicitation, and let each
+	// finish writing its answer before the process exits.
+	cancel()
 	s.end()
+	wg.Wait()
 	return err
 }
 

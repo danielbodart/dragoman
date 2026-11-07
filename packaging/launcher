@@ -1,0 +1,44 @@
+#!/bin/sh
+# bin/dragoman in the plugin: picks this machine's binary from bin/<os>-<arch>/
+# and exec's it. Claude Code runs it for the MCP server (`serve`) and for the
+# hooks (`hook posture`, `hook check`).
+#
+# Dragoman ships for Linux on x86_64 and aarch64, and macOS on Apple silicon.
+# Anywhere else (Windows, which Claude Code's Git Bash reports as MINGW, MSYS
+# or CYGWIN, or a machine with no uname at all; an Intel Mac; another
+# architecture) it does nothing and exits 0: a hook prints nothing, so no
+# tool call is blocked or slowed, and `serve` says why on stderr and exits,
+# so Claude Code shows the bridge as not connected rather than broken.
+
+unsupported() {
+  case "$1" in
+    serve | "") echo "$2" >&2 ;;
+  esac
+  exit 0
+}
+
+here=$(dirname "$0")
+command -v uname >/dev/null 2>&1 || unsupported "${1:-}" "Dragoman does not support Windows; use WSL"
+os=$(uname -s)
+arch=$(uname -m)
+target=
+case "$os" in
+  Linux)
+    case "$arch" in
+      x86_64 | amd64) target=linux-x86_64 ;;
+      aarch64 | arm64) target=linux-aarch64 ;;
+    esac
+    ;;
+  Darwin)
+    # A shell under Rosetta says x86_64 on Apple silicon; the arm64 binary
+    # still runs there.
+    if [ "$arch" = arm64 ] || [ "$(sysctl -n hw.optional.arm64 2>/dev/null)" = 1 ]; then
+      target=darwin-arm64
+    fi
+    ;;
+  MINGW* | MSYS* | CYGWIN* | Windows*)
+    unsupported "${1:-}" "Dragoman does not support Windows; use WSL"
+    ;;
+esac
+[ -n "$target" ] || unsupported "${1:-}" "Dragoman runs on Linux (x86_64, aarch64) and macOS on Apple silicon, not $os $arch"
+exec "$here/$target/dragoman" "$@"

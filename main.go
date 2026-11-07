@@ -16,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/danielbodart/dragoman/internal/app"
+	dragomanhook "github.com/danielbodart/dragoman/internal/hook"
 	"github.com/danielbodart/dragoman/internal/version"
 	"github.com/danielbodart/gokit/environ"
 )
@@ -25,7 +26,10 @@ const usage = `dragoman - a local bridge making OpenAI Codex a native-feeling su
 Usage: dragoman [options] [command]
 
 Commands:
-  serve     Run as a stdio MCP server for Claude Code (default)
+  serve          Run as a stdio MCP server for Claude Code (default)
+  hook posture   The PreToolUse hook: record Claude's live permission mode
+  hook check     The SessionStart hook: warn when codex is not on PATH
+  version        Show the version
 
 Options:
       --codex-command CMD   Codex app-server command to spawn
@@ -44,6 +48,7 @@ type parsed struct {
 	codexCommand []string
 	help         bool
 	showVersion  bool
+	args         []string
 }
 
 // parseArguments reads the command line. DRAGOMAN_CODEX_COMMAND overrides
@@ -72,6 +77,10 @@ func parseArguments(args []string, env environ.Env) (parsed, error) {
 			if strings.HasPrefix(a, "-") {
 				return p, fmt.Errorf("unknown option '%s'", a)
 			}
+			if p.command == "hook" && p.args == nil {
+				p.args = args[i:]
+				return p, nil
+			}
 			p.command = a
 		}
 	}
@@ -91,6 +100,8 @@ func run(args []string, env environ.Env, stdin io.Reader, stdout, stderr io.Writ
 	case p.help:
 		fmt.Fprint(stdout, usage)
 		return 0
+	case p.command == "hook":
+		return hook(p.args, env, stdin, stdout, stderr)
 	case p.command != "serve":
 		fmt.Fprintf(stderr, "Error: '%s' is not a command\n\n%s", p.command, usage)
 		return 2
@@ -98,6 +109,24 @@ func run(args []string, env environ.Env, stdin io.Reader, stdout, stderr io.Writ
 	if err := serve(p, env, stdin, stdout); err != nil {
 		fmt.Fprintln(stderr, "Error:", err)
 		return 1
+	}
+	return 0
+}
+
+// hook runs a Claude Code hook. A hook never fails the tool call it rides,
+// so even an unknown one exits 0, saying so on stderr.
+func hook(args []string, env environ.Env, stdin io.Reader, stdout, stderr io.Writer) int {
+	name := ""
+	if len(args) > 0 {
+		name = args[0]
+	}
+	switch name {
+	case "posture":
+		dragomanhook.Posture(stdin, env)
+	case "check":
+		dragomanhook.Check(stdin, stdout, dragomanhook.LookPath)
+	default:
+		fmt.Fprintf(stderr, "dragoman: no hook '%s' (posture, check)\n", name)
 	}
 	return 0
 }

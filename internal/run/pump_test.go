@@ -440,7 +440,7 @@ func TestWaitForEventsSleepsThroughTelemetryAndWakesOnAnEvent(t *testing.T) {
 	l.started(t, h)
 	l.runs.Drain(h)
 	woke := make(chan struct{})
-	go func() { l.runs.WaitForEvents(h, time.Hour); close(woke) }()
+	go func() { l.runs.WaitForEvents(bg, h, time.Hour); close(woke) }()
 	breakdown := map[string]any{"totalTokens": 10, "inputTokens": 10, "cachedInputTokens": 0, "cacheWriteInputTokens": 0, "outputTokens": 0, "reasoningOutputTokens": 0}
 	f.Emit("thread/tokenUsage/updated", map[string]any{"threadId": h, "turnId": "turn1", "tokenUsage": map[string]any{"total": breakdown, "last": breakdown, "modelContextWindow": 100}}, ptr(int64(1700)))
 	eventually(t, "the telemetry folded in", func() bool { return l.status(t, h).Ctx != nil })
@@ -462,7 +462,7 @@ func TestWaitForEventsReturnsAfterTheTimeoutOnAQuietRun(t *testing.T) {
 	h := l.start(t, "")
 	l.started(t, h)
 	l.runs.Drain(h)
-	l.runs.WaitForEvents(h, 40*time.Millisecond)
+	l.runs.WaitForEvents(bg, h, 40*time.Millisecond)
 	if l.runs.HasPending(h) {
 		t.Fatal("nothing pending")
 	}

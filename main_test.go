@@ -1,6 +1,8 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -66,6 +68,33 @@ func TestAnUnknownCommandExitsTwo(t *testing.T) {
 func TestVersionPrintsTheVersion(t *testing.T) {
 	var out, errs strings.Builder
 	if code := run([]string{"--version"}, environ.Env{}, strings.NewReader(""), &out, &errs); code != 0 || strings.TrimSpace(out.String()) != "development" {
+		t.Fatalf("got %d, %q", code, out.String())
+	}
+}
+
+func TestHookPostureRecordsTheModeAndPrintsNothing(t *testing.T) {
+	dir := t.TempDir()
+	var out, errs strings.Builder
+	code := run([]string{"hook", "posture"}, environ.Env{"XDG_RUNTIME_DIR": dir}, strings.NewReader(`{"tool_use_id":"toolu_1","permission_mode":"plan"}`), &out, &errs)
+	if code != 0 || out.String() != "" {
+		t.Fatalf("got %d, %q, %q", code, out.String(), errs.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, "dragoman", "live-mode", "toolu_1")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// A hook never fails the tool call it rides.
+func TestAnUnknownHookExitsZero(t *testing.T) {
+	var out, errs strings.Builder
+	if code := run([]string{"hook", "someFuture"}, environ.Env{}, strings.NewReader(""), &out, &errs); code != 0 || out.String() != "" {
+		t.Fatalf("got %d, %q", code, out.String())
+	}
+}
+
+func TestVersionIsACommandToo(t *testing.T) {
+	var out, errs strings.Builder
+	if code := run([]string{"version"}, environ.Env{}, strings.NewReader(""), &out, &errs); code != 0 || strings.TrimSpace(out.String()) != "development" {
 		t.Fatalf("got %d, %q", code, out.String())
 	}
 }

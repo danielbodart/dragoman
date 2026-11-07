@@ -1,23 +1,170 @@
-#!/usr/bin/env bun
-import { version } from "./scripts/version.ts";
+#!/bin/sh
+# The one place Dragoman's build is defined, so CI runs the same commands a
+# developer does. mise.toml's tasks call it:
+# ./run <version|lint|test|check|build|dist|integration|regen-protocol|release-due|marketplace>.
+set -eu
 
-/**
- * `run` is pure syntactic sugar over mise: `run <task> [args…]`.
- *
- * `version` is the one task answered here - it is derived TypeScript, not a
- * shell one-liner - and everything else is delegated straight to
- * `mise run <task> [args…]`. mise owns the dependency graph and every real
- * task (check, test, build, package, ci, release); this file is just a thin,
- * memorable front door so any project can be driven with `run <thing>`.
- */
-const [name, ...args] = process.argv.slice(2);
+cd "$(dirname "$0")"
 
-if (name === "version") {
-  console.log(await version());
-} else {
-  // Default to `build` to preserve the old bare-invocation behaviour.
-  const proc = Bun.spawn(["mise", "run", name ?? "build", ...args], {
-    stdio: ["inherit", "inherit", "inherit"],
-  });
-  process.exit(await proc.exited);
+NAME=dragoman
+
+# The package the version is set in, at link time.
+VERSION_VAR=github.com/danielbodart/dragoman/internal/version.Version
+
+# Every platform released, as <plugin dir>:<GOOS>:<GOARCH>. The plugin's
+# bin/dragoman launcher picks one by `uname -sm`.
+TARGETS="linux-x86_64:linux:amd64 linux-aarch64:linux:arm64 darwin-arm64:darwin:arm64"
+
+die() {
+  echo "Error: $*" >&2
+  exit 1
 }
+
+# The version, derived from the repository rather than stored in it.
+#
+# Only the major is committed (in MAJOR) - it is the one part that is a
+# deliberate decision. Minor is the commit count, so it only ever rises and
+# names exactly one commit. Patch is the CI run number (or a local timestamp),
+# separating two builds of the same commit - a re-run or a manual build - and
+# making a developer build sort after CI's and obviously not one.
+version() {
+  # Counted from HEAD, not from a branch name. On Actions the checkout is
+  # detached, so `git rev-parse --abbrev-ref HEAD` answers "HEAD", and
+  # GITHUB_REF_NAME on a pull request is "123/merge", which is not a rev at
+  # all. HEAD is the commit being built in every one of those cases.
+  if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+    die "this is a shallow clone, so the commit count is wrong and so is the version. In Actions, checkout with \`fetch-depth: 0\`."
+  fi
+  echo "$(cat MAJOR).$(git rev-list --count HEAD).${GITHUB_RUN_NUMBER:-$(date -u +%Y%m%d%H%M%S)}"
+}
+
+# gofmt, vet, and the generated protocol up to date with the schema.
+lint() {
+  unformatted=$(gofmt -l main.go internal)
+  [ -z "$unformatted" ] || die "not gofmt'd: $unformatted"
+  go vet ./...
+  go run ./internal/protocol/gen -check
+}
+
+# The unit tests. The cap turns a missed wake, which hangs rather than
+# fails, into a failure.
+test() {
+  go test -count=1 -timeout 5m "$@" ./...
+}
+
+check() {
+  lint
+  test "$@"
+}
+
+# The live tests against a real `codex app-server`: the model-free ones
+# (command/exec), or every one with DRAGOMAN_MODEL_TESTS=1. Ratcheted: a test
+# that passed is skipped until its file changes.
+integration() {
+  go test -count=1 -timeout 30m -tags integration "$@" ./internal/integration/
+}
+
+# Static, so the binary runs on any distribution, glibc or musl, and on NixOS
+# unpatched. Go's linker ad-hoc signs darwin/arm64 even cross-compiled, which
+# Apple silicon requires. The version reaches it as a link-time -X; without
+# one it says "development", the truth about a `go run`.
+compile() {
+  CGO_ENABLED=0 GOOS="$2" GOARCH="$3" \
+    go build -trimpath -ldflags "-s -w -X $VERSION_VAR=$1" -o "$4" .
+}
+
+build() {
+  outfile=${1:-dist/$NAME}
+  v=$(version)
+  compile "$v" "$(go env GOOS)" "$(go env GOARCH)" "$outfile"
+  echo "built $outfile $v"
+}
+
+# Everything a release ships, from one compile per platform:
+#
+#   dist/plugin/               the plugin as Claude Code unpacks it: the
+#                              manifest (stamped with the version), .mcp.json,
+#                              hooks.json, the bin/dragoman launcher and a
+#                              binary per platform under bin/<os>-<arch>/,
+#                              skills/ and agents/
+#   dist/release/              what a GitHub release carries: the plugin zip
+#                              (the marketplace's archive source is one
+#                              url+sha256, so every platform rides in it) and
+#                              SHA256SUMS
+#   dist/version               the version all of it says, for CI's gates
+dist() {
+  v=$(version)
+  rm -rf dist
+  stage=dist/plugin
+  mkdir -p "$stage/.claude-plugin" "$stage/bin" dist/release
+  for target in $TARGETS; do
+    dir=${target%%:*}
+    rest=${target#*:}
+    compile "$v" "${rest%%:*}" "${rest#*:}" "$stage/bin/$dir/$NAME"
+  done
+  cp packaging/launcher "$stage/bin/$NAME"
+  sed "s/\"version\": *\"[^\"]*\"/\"version\": \"$v\"/" .claude-plugin/plugin.json > "$stage/.claude-plugin/plugin.json"
+  grep -q "\"version\": \"$v\"" "$stage/.claude-plugin/plugin.json" || die "plugin.json has no version to stamp"
+  cp packaging/mcp.json "$stage/.mcp.json"
+  cp packaging/hooks.json "$stage/hooks.json"
+  cp -R skills agents "$stage/"
+  chmod -R u+rwX,go+rX "$stage"
+  chmod 755 "$stage/bin/$NAME"
+  go run ./internal/tools/zipdir "$stage" "dist/release/$NAME-plugin.zip"
+  (CDPATH='' cd dist/release && sha256sum -- * > SHA256SUMS)
+  echo "$v" > dist/version
+  echo "built dist $v"
+}
+
+# The protocol bindings, from the installed codex: its JSON Schema, then the
+# Go generated from it. The `git diff` after a codex upgrade is the protocol
+# change.
+regen_protocol() {
+  rm -rf generated/codex-protocol/schema
+  codex app-server generate-json-schema --out generated/codex-protocol/schema --experimental
+  go run ./internal/protocol/gen
+  echo "regenerated the protocol from $(codex --version)"
+}
+
+# Succeeds when a file in RELEASE_PATHS changed since the last release tag, or
+# there is none yet. RELEASE_PATHS is mise.toml's, so this runs as
+# `mise run release-due`.
+release_due() {
+  : "${RELEASE_PATHS:?is set by mise.toml: run this as mise run release-due}"
+  last=$(git describe --tags --abbrev=0 --match 'v*' HEAD 2>/dev/null) || {
+    echo "no release yet" >&2
+    return 0
+  }
+  # shellcheck disable=SC2086 # $RELEASE_PATHS is a list of plain paths
+  changed=$(git diff --name-only "$last" HEAD -- $RELEASE_PATHS)
+  [ -n "$changed" ] || {
+    echo "nothing released has changed since $last" >&2
+    return 1
+  }
+  echo "changed since $last:" "$changed" >&2
+}
+
+# Points the marketplace catalog at a release of dist/: the plugin's version,
+# its zip's URL and sha256. CI commits the change.
+marketplace() {
+  v=$(cat dist/version)
+  sha=$(sha256sum "dist/release/$NAME-plugin.zip" | cut -d' ' -f1)
+  url="https://github.com/danielbodart/$NAME/releases/download/v$v/$NAME-plugin.zip"
+  jq --indent 2 --arg v "$v" --arg url "$url" --arg sha "$sha" \
+    '(.plugins[] | select(.name == "dragoman")) |= (.version = $v | .source.url = $url | .source.sha256 = $sha)' \
+    .claude-plugin/marketplace.json > dist/marketplace.json
+  mv dist/marketplace.json .claude-plugin/marketplace.json
+  echo "marketplace points at v$v"
+}
+
+command=${1:-build}
+[ $# -gt 0 ] && shift
+case $command in
+  version|lint|test|check|build|dist|integration|marketplace) "$command" "$@" ;;
+  regen-protocol) regen_protocol ;;
+  release-due) release_due ;;
+  *)
+    echo "Error: '$command' is not a command. Try: version, lint, test, check, build, dist, integration, regen-protocol, release-due, marketplace" >&2
+    exit 2
+    ;;
+esac

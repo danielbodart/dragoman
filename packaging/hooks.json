@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/check-dependencies.sh"
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/dragoman hook check"
           }
         ]
       }
@@ -16,7 +16,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "${CLAUDE_PLUGIN_ROOT}/scripts/inject-posture.sh"
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/dragoman hook posture"
           }
         ]
       }

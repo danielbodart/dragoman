@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -229,4 +230,42 @@ func TestAnElicitationInFlightFailsWhenTheClientGoesAway(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("the elicitation hung")
 	}
+}
+
+// A request followed at once by the end of stdin is still answered, and a
+// call parked until its context ends is let go, so the process can exit.
+func TestEndOfInputAnswersWhatIsInFlight(t *testing.T) {
+	s := NewServer(ToolsJSON, func(ctx context.Context, name string, _ json.RawMessage, _ map[string]any) (any, bool) {
+		if name == "parked" {
+			<-ctx.Done()
+		}
+		return map[string]any{"name": name}, false
+	}, nil)
+	in := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-11-25"}}` + "\n" +
+		`{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"parked"}}` + "\n")
+	var out strings.Builder
+	done := make(chan error, 1)
+	go func() { done <- s.Serve(context.Background(), in, &lockedWriter{w: &out}) }()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("Serve did not return")
+	}
+	if !strings.Contains(out.String(), `"id":1`) || !strings.Contains(out.String(), `"id":2`) {
+		t.Fatalf("got %q", out.String())
+	}
+}
+
+type lockedWriter struct {
+	mu sync.Mutex
+	w  io.Writer
+}
+
+func (l *lockedWriter) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.w.Write(p)
 }

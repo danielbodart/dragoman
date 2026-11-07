@@ -1,112 +1,51 @@
+# The toolchain for the dev loop and for CI, which both go through these
+# tasks. The weekly update moves each tool to the latest patch of its minor;
+# a new minor moves here by hand.
 [tools]
-bun = "1.3"
 go = "1.27.3"
 # Signs the release assets, keyless, in CI.
 cosign = "3.0.6"
 
-# mise owns the dependency graph. The `run` sugar delegates here for everything
-# except `version`; CI and local dev both go through these tasks, so the two
-# stay in lockstep. Tasks are plain shell where they can be; the two that need
-# real TypeScript are their own scripts (`scripts/version.ts`,
-# `scripts/package.ts`).
+# What a release is built from. A change to any of these since the last
+# release tag releases (mise run release-due, which CI and the weekly update
+# ask); anything else - docs, workflows, PLAN.md - goes out with the next
+# release one of these makes.
+[env]
+RELEASE_PATHS = "main.go internal go.mod go.sum mise.toml run MAJOR packaging skills agents .claude-plugin/plugin.json generated"
 
-[tasks.install]
-run = "bun install --frozen-lockfile"
-
-[tasks.check]
-depends = ["install", "go-check"]
-run = "bunx tsc --noEmit"
-
-# The Go port, beside the TypeScript until it replaces it: gofmt, vet, the
-# generated protocol up to date with the schema, and the unit tests.
-[tasks.go-check]
-run = '''
-set -e
-unformatted=$(gofmt -l main.go internal parity)
-[ -z "$unformatted" ] || { echo "not gofmt'd: $unformatted" >&2; exit 1; }
-go vet ./...
-go run ./internal/protocol/gen -check
-go test -count=1 ./...
-'''
+[tasks.lint]
+description = "gofmt, go vet, and the generated protocol up to date"
+run = "./run lint"
 
 [tasks.test]
-depends = ["install"]
-run = "bun test"
+description = "Unit tests"
+run = "./run test"
 
-# Bundle the server to a single self-contained JS (deps inlined) run by bun -
-# not a `--compile` native binary, which embedded the whole Bun runtime and made
-# the plugin archive ~116 MB. The version reaches the bundle as a build-time
-# define rather than a generated file, so nothing is written into src/ that
-# would then show up as a change; src/version.ts falls back when the define is
-# absent (e.g. `bun run src/main.ts`).
+[tasks.check]
+description = "Lint and unit tests: the dev loop, and CI's first gate"
+depends = ["lint", "test"]
+
+[tasks.integration]
+description = "Live tests against a real codex: model-free, or every one with DRAGOMAN_MODEL_TESTS=1"
+run = "./run integration"
+
+# build and dist declare no sources to skip on: the version they stamp in is
+# the commit count and the CI run number (or the time), which change when no
+# source does, so a skipped run would ship an old version. Go's own build
+# cache is what makes a rerun cheap.
 [tasks.build]
-depends = ["check"]
-run = '''
-v="$(bun scripts/version.ts)"
-# --outdir (not --outfile): bare `--sourcemap` makes `bun build` ignore
-# --outfile and write next to the entrypoint (into src/); --outdir is immune,
-# and --entry-naming keeps the name dragoman.js rather than the entry's main.js.
-bun build --target=bun --minify --sourcemap --entry-naming 'dragoman.[ext]' --define "DRAGOMAN_VERSION=\"$v\"" src/main.ts --outdir dist
-echo "built dist/dragoman.js $v"
-'''
+description = "A static binary for this machine, into dist/"
+run = "./run build"
 
-[tasks.package]
-depends = ["install"]
-run = "bun scripts/package.ts"
+[tasks.dist]
+description = "Every platform's binary, the plugin zip and SHA256SUMS, into dist/"
+run = "./run dist"
 
-# Regenerate the committed Codex app-server protocol bindings from the installed
-# `codex` CLI (a dev-only task; CI never runs it). Rerun after a codex upgrade;
-# the resulting `git diff` is the protocol change. See
-# generated/codex-protocol/README.md for the pinned version.
+# A dev-only task, after a codex upgrade; CI never runs it.
 [tasks.regen-protocol]
-run = '''
-codex app-server generate-ts --out generated/codex-protocol/ts --experimental
-codex app-server generate-json-schema --out generated/codex-protocol/schema --experimental
-echo "regenerated generated/codex-protocol from $(codex --version)"
-'''
+description = "Regenerate the protocol's JSON Schema from the installed codex, and the Go from it"
+run = "./run regen-protocol"
 
-# The whole validation pipeline - what every push and PR runs. GitHub Actions
-# calls exactly this, so `mise run ci` locally does the same work.
-[tasks.ci]
-depends = ["check", "test", "package"]
-
-# Publish the release: cut the GitHub release and repoint the marketplace at it.
-# Consumes the artifacts `package` already staged under dist/ (run `mise run ci`
-# or `mise run package` first). Invoked only from Actions on push-to-main; needs
-# GITHUB_TOKEN in the environment for both `gh` and the marketplace push.
-[tasks.release]
-# bash, not mise's default sh - `set -o pipefail` (below) is a bashism.
-shell = "bash -c"
-run = '''
-set -euo pipefail
-v="$(bun scripts/version.ts)"
-sha="$(sha256sum dist/dragoman-plugin.zip | awk '{print $1}')"
-
-# The whole plugin rides in the one zip (the marketplace archive source is a
-# single url+sha256), so that is the only release asset.
-gh release create "v$v" \
-  --title "v$v" \
-  dist/dragoman-plugin.zip
-
-# Point the marketplace catalog at the new release.
-export V="$v" SHA="$sha"
-bun -e '
-  const f = ".claude-plugin/marketplace.json";
-  const m = JSON.parse(await Bun.file(f).text());
-  const p = m.plugins.find((p) => p.name === "dragoman");
-  p.version = process.env.V;
-  p.source.url = `https://github.com/danielbodart/dragoman/releases/download/v${process.env.V}/dragoman-plugin.zip`;
-  p.source.sha256 = process.env.SHA;
-  await Bun.write(f, JSON.stringify(m, null, 2) + "\n");
-'
-if git diff --quiet .claude-plugin/marketplace.json; then
-  echo "marketplace.json already current"; exit 0
-fi
-git config user.name "github-actions[bot]"
-git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-git add .claude-plugin/marketplace.json
-git commit -m "release: point marketplace at v$V [skip ci]"
-# A concurrent push can win the race; the next release re-points, so a failed
-# push is a warning, not a build failure.
-git push origin HEAD:main || echo "::warning::marketplace pointer push raced; next release will re-point"
-'''
+[tasks.release-due]
+description = "Succeed if anything in RELEASE_PATHS changed since the last release tag, or there is none; fail otherwise"
+run = "./run release-due"

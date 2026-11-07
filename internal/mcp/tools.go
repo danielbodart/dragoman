@@ -82,7 +82,7 @@ func (t *Tools) Call(ctx context.Context, name string, raw json.RawMessage, meta
 	case "codex_run":
 		result, err = t.run(ctx, args, mode())
 	case "codex_status":
-		result = t.status(args)
+		result = t.status(ctx, args)
 	case "codex_steer":
 		result, err = t.steer(ctx, args)
 	case "codex_cancel":
@@ -222,7 +222,7 @@ func (t *Tools) review(ctx context.Context, args arguments, posture string) (any
 // moment the run has an event or settles, else after the cap with nothing,
 // for the caller to poll again. It drains the one timeline, every event
 // delivered exactly once, in order.
-func (t *Tools) status(args arguments) any {
+func (t *Tools) status(ctx context.Context, args arguments) any {
 	handle := args["handle"]
 	if _, ok := t.Runs.Status(handle); !ok {
 		return unknownHandle{Error: fmt.Sprintf("No Codex task with handle %q.", handle)}
@@ -231,7 +231,7 @@ func (t *Tools) status(args arguments) any {
 	if wait == 0 {
 		wait = StatusLongPoll
 	}
-	t.Runs.WaitForEvents(handle, wait)
+	t.Runs.WaitForEvents(ctx, handle, wait)
 	rec, ok := t.Runs.Status(handle)
 	if !ok {
 		return unknownHandle{Error: fmt.Sprintf("No Codex task with handle %q.", handle)}

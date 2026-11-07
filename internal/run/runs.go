@@ -587,6 +587,10 @@ func (r *Runs) Revision(handle string) int {
 // terminal), else when timeout elapses, with the latest state and revision
 // either way. It makes no calls while a run sits quiet.
 func (r *Runs) WaitForUpdate(handle string, since int, timeout time.Duration) (Record, bool, int) {
+	return r.waitForUpdate(context.Background(), handle, since, timeout)
+}
+
+func (r *Runs) waitForUpdate(ctx context.Context, handle string, since int, timeout time.Duration) (Record, bool, int) {
 	r.mu.Lock()
 	rec, ok := r.runs[handle]
 	if r.revisions[handle] > since || (ok && rec.Status.terminal()) {
@@ -605,6 +609,7 @@ func (r *Runs) WaitForUpdate(handle string, since int, timeout time.Duration) (R
 	select {
 	case <-ch:
 	case <-timer.C:
+	case <-ctx.Done():
 	}
 	snap, ok := r.Status(handle)
 	return snap, ok, r.Revision(handle)
@@ -613,8 +618,8 @@ func (r *Runs) WaitForUpdate(handle string, since int, timeout time.Duration) (R
 // WaitForEvents parks until the run has an undelivered event or is terminal,
 // or timeout elapses: the wait behind codex_status. A bump that appends no
 // event (telemetry, a turn id) does not end it: the caller would only spend
-// a model turn reading an empty reply.
-func (r *Runs) WaitForEvents(handle string, timeout time.Duration) {
+// a model turn reading an empty reply. It returns early when ctx is done.
+func (r *Runs) WaitForEvents(ctx context.Context, handle string, timeout time.Duration) {
 	deadline := time.Now().Add(timeout)
 	for {
 		rec, ok := r.Status(handle)
@@ -622,10 +627,10 @@ func (r *Runs) WaitForEvents(handle string, timeout time.Duration) {
 			return
 		}
 		remaining := time.Until(deadline)
-		if remaining <= 0 {
+		if remaining <= 0 || ctx.Err() != nil {
 			return
 		}
-		r.WaitForUpdate(handle, r.Revision(handle), remaining)
+		r.waitForUpdate(ctx, handle, r.Revision(handle), remaining)
 	}
 }
 

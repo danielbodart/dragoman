@@ -1,21 +1,8 @@
-# Dependencies
-node_modules/
-
-# Bun
-.bun/
-bun.lockb.*
-
 # Build output
 dist/
-build/
-*.tsbuildinfo
-# Compiled single-binary output
-/dragoman
-/dragoman-*
 
-# Env / secrets
-.env
-.env.*
+# Ratchet markers for the live integration tests
+internal/integration/.state/
 
 # Editor / OS
 .DS_Store
@@ -23,10 +10,10 @@ build/
 .vscode/
 *.log
 
-# Ratchet markers for live integration tests
-test/integration/.state/
+# Env / secrets
+.env
+.env.*
 
 # Local Claude Code state (per-developer settings, session worktrees)
 .claude/settings.local.json
 .claude/worktrees/
-internal/integration/.state/

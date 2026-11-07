@@ -1,13 +1,13 @@
 # Codex app-server protocol bindings (generated)
 
-**Do not hand-edit.** These are [ts-rs](https://github.com/Aleph-Alpha/ts-rs)
-bindings and JSON Schemas for OpenAI Codex's `app-server` JSON-RPC protocol,
-generated from the installed `codex` CLI and committed so Dragoman builds and
-tests without a `codex` binary present.
+**Do not hand-edit.** This is the JSON Schema for OpenAI Codex's `app-server`
+JSON-RPC protocol, generated from the installed `codex` CLI and committed so
+Dragoman builds and tests without a `codex` binary present.
 
-- `ts/` — TypeScript types, one file per protocol type. `ts/index.ts` is a
-  barrel re-export; import from there (`generated/codex-protocol/ts/index.ts`).
-- `schema/` — the JSON Schema bundle for the same types.
+- `schema/` — the JSON Schema, one file per root type plus the bundles.
+  `internal/protocol/gen` reads `codex_app_server_protocol.schemas.json` and
+  writes the Go types Dragoman uses to `internal/protocol/protocol_gen.go`;
+  `mise run check` fails if that file is out of date.
 
 ## Pinned version
 
@@ -24,12 +24,12 @@ mise run regen-protocol
 which runs, under the hood:
 
 ```
-codex app-server generate-ts          --out generated/codex-protocol/ts     --experimental
 codex app-server generate-json-schema --out generated/codex-protocol/schema --experimental
+go run ./internal/protocol/gen
 ```
 
-The resulting `git diff` **is** the protocol change between the two `codex`
-versions — review it as you would any other change. Update the pinned version
+The resulting `git diff` (the schema, and the Go generated from it) **is** the
+protocol change between the two `codex` versions — review it as you would any other change. Update the pinned version
 above when you regenerate.
 
 ## Wire notes (not obvious from the types)

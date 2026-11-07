@@ -85,11 +85,11 @@ auto-accept and deny-rules pre-decline in-process; the rest elicit natively.
 `permissions.defaultMode` is only the *static* mode; the live mid-session mode is
 session state the MCP server can't read (diagnostics once showed `defaultMode=auto`
 while the session was in manual). A **PreToolUse hook**
-(`packaging/inject-posture.sh`, matched on `codex_run`, `codex_continue` and
+(`dragoman hook posture`, matched on `codex_run`, `codex_continue` and
 `codex_review`) reads Claude's `.permission_mode` and `.tool_use_id` off stdin and
 writes the mode to `${XDG_RUNTIME_DIR:-${TMPDIR:-/tmp}}/dragoman/live-mode/<tool_use_id>`.
 Claude Code sends the same id on the MCP request as `_meta["claudecode/toolUseId"]`,
-so the server reads exactly that call's file and deletes it (`src/live-mode.ts`).
+so the server reads exactly that call's file and deletes it (`internal/posture/livemode.go`).
 Resolution order: live mode ?? static `defaultMode` ?? safe default.
 
 Keying by tool-use id rather than session id matters: the server's

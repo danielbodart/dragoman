@@ -86,11 +86,22 @@ Dragoman is a Claude Code plugin. Add the marketplace and install it:
 /plugin install dragoman@danielbodart 
 ```
 
-That pulls a small archive (~280 KB) carrying the server as a single bundled
-JS. It runs with [**Bun**](https://bun.sh) — which must be on your `PATH`
-(a SessionStart hook warns if it is missing) — so there is no per-platform
-binary and no multi-megabyte download. Codex must also be on your `PATH`
-(Dragoman spawns `codex app-server`).
+That pulls one small archive (~5 MB) carrying a static binary for each
+supported platform, and a launcher that picks the right one. Nothing else to
+install: no runtime, no `jq`. Codex must be on your `PATH`, since Dragoman
+spawns `codex app-server` (a SessionStart hook tells Claude if it isn't).
+
+| Platform | Supported |
+|---|---|
+| Linux x86_64 | yes |
+| Linux aarch64 | yes |
+| macOS on Apple silicon (M1 and later) | yes |
+| macOS on Intel | no |
+| Windows | no: use [WSL](https://learn.microsoft.com/windows/wsl/), which is Linux |
+
+On a platform it doesn't support, the plugin does nothing: its hooks stay
+silent and the MCP server reports that it can't run there, so Claude Code
+shows it as not connected.
 
 Once installed you get:
 
@@ -107,11 +118,19 @@ Once installed you get:
 
 ### From source
 
+[mise](https://mise.jdx.dev) installs the Go toolchain; `./run` is the build:
+
 ```bash
-mise run build                                             # bundle → dist/dragoman.js
-claude mcp add dragoman -s user -- bun "$PWD/dist/dragoman.js" serve
-mise run package                                           # or the full plugin archive → dist/dragoman-plugin.zip
+mise install
+mise run check                                             # gofmt, vet, generated protocol, unit tests
+mise run build                                             # this machine's binary → dist/dragoman
+claude mcp add dragoman -s user -- "$PWD/dist/dragoman" serve
+mise run dist                                              # or the full plugin → dist/release/dragoman-plugin.zip
 ```
+
+`mise run integration` runs the live tests against a real `codex`: the
+model-free ones by default (`command/exec` in the sandbox), every one with
+`DRAGOMAN_MODEL_TESTS=1`.
 
 ## License
 
