@@ -1,0 +1,150 @@
+[
+  {
+    "name": "codex_run",
+    "description": "Start an OpenAI Codex task in the background and return a handle immediately. Poll codex_status with the handle to follow progress; approvals surface as native prompts.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "prompt": {
+          "type": "string",
+          "description": "What Codex should do."
+        },
+        "cwd": {
+          "type": "string",
+          "description": "Working directory for the task (absolute path)."
+        }
+      },
+      "required": [
+        "prompt",
+        "cwd"
+      ]
+    },
+    "outputSchema": {
+      "type": "object"
+    }
+  },
+  {
+    "name": "diagnostics",
+    "description": "Report Dragoman's runtime state: live Codex runs (status, active turn, latest milestone), the working directory, Claude Code env vars, reachable settings files, and the mirror preview (what those settings would apply to Codex per posture). Use it to see what a run is doing or why a mirror resolved as it did.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {}
+    },
+    "outputSchema": {
+      "type": "object"
+    }
+  },
+  {
+    "name": "codex_status",
+    "description": "Check a Codex task started with codex_run: its status, the latest progress line, and the result when done.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "description": "The handle codex_run returned."
+        }
+      },
+      "required": [
+        "handle"
+      ]
+    },
+    "outputSchema": {
+      "type": "object"
+    }
+  },
+  {
+    "name": "codex_steer",
+    "description": "Send guidance to a RUNNING Codex task without interrupting it — the way you'd type a message while an agent works. Use it to nudge, add a constraint, or redirect focus mid-turn (e.g. 'also check the Windows path'). The task keeps its context and carries on; poll codex_status to see the steer take effect.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "description": "The handle codex_run returned."
+        },
+        "text": {
+          "type": "string",
+          "description": "The guidance to inject into the running turn."
+        }
+      },
+      "required": [
+        "handle",
+        "text"
+      ]
+    },
+    "outputSchema": {
+      "type": "object"
+    }
+  },
+  {
+    "name": "codex_cancel",
+    "description": "Stop a RUNNING Codex task — the equivalent of pressing Esc. Use it when the task has gone off the rails or is no longer needed. Returns immediately; poll codex_status to confirm it stopped. To redirect rather than stop, prefer codex_steer.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "description": "The handle codex_run returned."
+        }
+      },
+      "required": [
+        "handle"
+      ]
+    },
+    "outputSchema": {
+      "type": "object"
+    }
+  },
+  {
+    "name": "codex_review",
+    "description": "Run Codex's dedicated code-review pass over a diff and return a handle immediately; poll codex_status for the findings. Codex computes the diff itself and returns a prioritized, file:line-anchored review (P1/P2/… findings) — its own first-class review, not a freeform prompt. By default reviews the UNCOMMITTED changes in `cwd`. Prefer this over codex_run for a code review.",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "cwd": {
+          "type": "string",
+          "description": "Working directory of the repo to review (absolute path)."
+        },
+        "against": {
+          "type": "string",
+          "description": "OPTIONAL base branch or ref to review the changes against (e.g. \"main\"). Omit to review the uncommitted changes."
+        },
+        "instructions": {
+          "type": "string",
+          "description": "OPTIONAL custom review focus (e.g. \"focus on error handling and edge cases\"). When set, Codex runs a custom review with these instructions instead of a plain diff review."
+        }
+      },
+      "required": [
+        "cwd"
+      ]
+    },
+    "outputSchema": {
+      "type": "object"
+    }
+  },
+  {
+    "name": "codex_continue",
+    "description": "Continue a FINISHED Codex task with a follow-up, on the same thread — so Codex keeps everything it learned instead of starting cold. Use it for the natural next step ('now update the tests', 'also handle the empty case'). The follow-up re-reads your CURRENT permission mode and settings, so it runs under the access you have now. Reuses the original handle; poll codex_status with it as usual. (For a task still running, use codex_steer.)",
+    "inputSchema": {
+      "type": "object",
+      "properties": {
+        "handle": {
+          "type": "string",
+          "description": "The handle of the finished task to continue."
+        },
+        "prompt": {
+          "type": "string",
+          "description": "The follow-up for Codex to do next on the same thread."
+        }
+      },
+      "required": [
+        "handle",
+        "prompt"
+      ]
+    },
+    "outputSchema": {
+      "type": "object"
+    }
+  }
+]

@@ -131,10 +131,10 @@ func (u *AgentMessageInputContent) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "input_text":
 		u.InputText = new(InputTextAgentMessageInputContent)
-		return json.Unmarshal(data, u.InputText)
+		_ = json.Unmarshal(data, u.InputText)
 	case "encrypted_content":
 		u.EncryptedContent = new(EncryptedContentAgentMessageInputContent)
-		return json.Unmarshal(data, u.EncryptedContent)
+		_ = json.Unmarshal(data, u.EncryptedContent)
 	}
 	return nil
 }
@@ -207,7 +207,8 @@ func (u AskForApproval) MarshalJSON() ([]byte, error) {
 func (u *AskForApproval) UnmarshalJSON(data []byte) error {
 	*u = AskForApproval{Raw: append(json.RawMessage(nil), data...)}
 	if len(data) > 0 && data[0] == '"' {
-		return json.Unmarshal(data, &u.Value)
+		_ = json.Unmarshal(data, &u.Value)
+		return nil
 	}
 	var keys map[string]json.RawMessage
 	if json.Unmarshal(data, &keys) != nil {
@@ -215,7 +216,8 @@ func (u *AskForApproval) UnmarshalJSON(data []byte) error {
 	}
 	if _, ok := keys["granular"]; ok {
 		u.Granular = new(GranularAskForApproval)
-		return json.Unmarshal(data, u.Granular)
+		_ = json.Unmarshal(data, u.Granular)
+		return nil
 	}
 	return nil
 }
@@ -278,7 +280,7 @@ func (u *CapabilityRootLocation) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "environment":
 		u.Environment = new(EnvironmentCapabilityRootLocation)
-		return json.Unmarshal(data, u.Environment)
+		_ = json.Unmarshal(data, u.Environment)
 	}
 	return nil
 }
@@ -332,7 +334,8 @@ func (u CodexErrorInfo) MarshalJSON() ([]byte, error) {
 func (u *CodexErrorInfo) UnmarshalJSON(data []byte) error {
 	*u = CodexErrorInfo{Raw: append(json.RawMessage(nil), data...)}
 	if len(data) > 0 && data[0] == '"' {
-		return json.Unmarshal(data, &u.Value)
+		_ = json.Unmarshal(data, &u.Value)
+		return nil
 	}
 	var keys map[string]json.RawMessage
 	if json.Unmarshal(data, &keys) != nil {
@@ -340,23 +343,28 @@ func (u *CodexErrorInfo) UnmarshalJSON(data []byte) error {
 	}
 	if _, ok := keys["httpConnectionFailed"]; ok {
 		u.HttpConnectionFailed = new(HttpConnectionFailedCodexErrorInfo)
-		return json.Unmarshal(data, u.HttpConnectionFailed)
+		_ = json.Unmarshal(data, u.HttpConnectionFailed)
+		return nil
 	}
 	if _, ok := keys["responseStreamConnectionFailed"]; ok {
 		u.ResponseStreamConnectionFailed = new(ResponseStreamConnectionFailedCodexErrorInfo)
-		return json.Unmarshal(data, u.ResponseStreamConnectionFailed)
+		_ = json.Unmarshal(data, u.ResponseStreamConnectionFailed)
+		return nil
 	}
 	if _, ok := keys["responseStreamDisconnected"]; ok {
 		u.ResponseStreamDisconnected = new(ResponseStreamDisconnectedCodexErrorInfo)
-		return json.Unmarshal(data, u.ResponseStreamDisconnected)
+		_ = json.Unmarshal(data, u.ResponseStreamDisconnected)
+		return nil
 	}
 	if _, ok := keys["responseTooManyFailedAttempts"]; ok {
 		u.ResponseTooManyFailedAttempts = new(ResponseTooManyFailedAttemptsCodexErrorInfo)
-		return json.Unmarshal(data, u.ResponseTooManyFailedAttempts)
+		_ = json.Unmarshal(data, u.ResponseTooManyFailedAttempts)
+		return nil
 	}
 	if _, ok := keys["activeTurnNotSteerable"]; ok {
 		u.ActiveTurnNotSteerable = new(ActiveTurnNotSteerableCodexErrorInfo)
-		return json.Unmarshal(data, u.ActiveTurnNotSteerable)
+		_ = json.Unmarshal(data, u.ActiveTurnNotSteerable)
+		return nil
 	}
 	return nil
 }
@@ -487,16 +495,16 @@ func (u *CommandAction) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "read":
 		u.Read = new(ReadCommandAction)
-		return json.Unmarshal(data, u.Read)
+		_ = json.Unmarshal(data, u.Read)
 	case "listFiles":
 		u.ListFiles = new(ListFilesCommandAction)
-		return json.Unmarshal(data, u.ListFiles)
+		_ = json.Unmarshal(data, u.ListFiles)
 	case "search":
 		u.Search = new(SearchCommandAction)
-		return json.Unmarshal(data, u.Search)
+		_ = json.Unmarshal(data, u.Search)
 	case "unknown":
 		u.Unknown = new(UnknownCommandAction)
-		return json.Unmarshal(data, u.Unknown)
+		_ = json.Unmarshal(data, u.Unknown)
 	}
 	return nil
 }
@@ -607,7 +615,8 @@ func (u CommandExecutionApprovalDecision) MarshalJSON() ([]byte, error) {
 func (u *CommandExecutionApprovalDecision) UnmarshalJSON(data []byte) error {
 	*u = CommandExecutionApprovalDecision{Raw: append(json.RawMessage(nil), data...)}
 	if len(data) > 0 && data[0] == '"' {
-		return json.Unmarshal(data, &u.Value)
+		_ = json.Unmarshal(data, &u.Value)
+		return nil
 	}
 	var keys map[string]json.RawMessage
 	if json.Unmarshal(data, &keys) != nil {
@@ -615,11 +624,13 @@ func (u *CommandExecutionApprovalDecision) UnmarshalJSON(data []byte) error {
 	}
 	if _, ok := keys["acceptWithExecpolicyAmendment"]; ok {
 		u.AcceptWithExecpolicyAmendment = new(AcceptWithExecpolicyAmendmentCommandExecutionApprovalDecision)
-		return json.Unmarshal(data, u.AcceptWithExecpolicyAmendment)
+		_ = json.Unmarshal(data, u.AcceptWithExecpolicyAmendment)
+		return nil
 	}
 	if _, ok := keys["applyNetworkPolicyAmendment"]; ok {
 		u.ApplyNetworkPolicyAmendment = new(ApplyNetworkPolicyAmendmentCommandExecutionApprovalDecision)
-		return json.Unmarshal(data, u.ApplyNetworkPolicyAmendment)
+		_ = json.Unmarshal(data, u.ApplyNetworkPolicyAmendment)
+		return nil
 	}
 	return nil
 }
@@ -799,16 +810,16 @@ func (u *ContentItem) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "input_text":
 		u.InputText = new(InputTextContentItem)
-		return json.Unmarshal(data, u.InputText)
+		_ = json.Unmarshal(data, u.InputText)
 	case "input_image":
 		u.InputImage = new(InputImageContentItem)
-		return json.Unmarshal(data, u.InputImage)
+		_ = json.Unmarshal(data, u.InputImage)
 	case "input_audio":
 		u.InputAudio = new(InputAudioContentItem)
-		return json.Unmarshal(data, u.InputAudio)
+		_ = json.Unmarshal(data, u.InputAudio)
 	case "output_text":
 		u.OutputText = new(OutputTextContentItem)
-		return json.Unmarshal(data, u.OutputText)
+		_ = json.Unmarshal(data, u.OutputText)
 	}
 	return nil
 }
@@ -928,13 +939,13 @@ func (u *DynamicToolCallOutputContentItem) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "inputText":
 		u.InputText = new(InputTextDynamicToolCallOutputContentItem)
-		return json.Unmarshal(data, u.InputText)
+		_ = json.Unmarshal(data, u.InputText)
 	case "inputImage":
 		u.InputImage = new(InputImageDynamicToolCallOutputContentItem)
-		return json.Unmarshal(data, u.InputImage)
+		_ = json.Unmarshal(data, u.InputImage)
 	case "inputAudio":
 		u.InputAudio = new(InputAudioDynamicToolCallOutputContentItem)
-		return json.Unmarshal(data, u.InputAudio)
+		_ = json.Unmarshal(data, u.InputAudio)
 	}
 	return nil
 }
@@ -994,7 +1005,7 @@ func (u *DynamicToolNamespaceTool) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "function":
 		u.Function = new(FunctionDynamicToolNamespaceTool)
-		return json.Unmarshal(data, u.Function)
+		_ = json.Unmarshal(data, u.Function)
 	}
 	return nil
 }
@@ -1041,10 +1052,10 @@ func (u *DynamicToolSpec) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "function":
 		u.Function = new(FunctionDynamicToolSpec)
-		return json.Unmarshal(data, u.Function)
+		_ = json.Unmarshal(data, u.Function)
 	case "namespace":
 		u.Namespace = new(NamespaceDynamicToolSpec)
-		return json.Unmarshal(data, u.Namespace)
+		_ = json.Unmarshal(data, u.Namespace)
 	}
 	return nil
 }
@@ -1193,13 +1204,13 @@ func (u *FileSystemPath) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "path":
 		u.Path = new(PathFileSystemPath)
-		return json.Unmarshal(data, u.Path)
+		_ = json.Unmarshal(data, u.Path)
 	case "glob_pattern":
 		u.GlobPattern = new(GlobPatternFileSystemPath)
-		return json.Unmarshal(data, u.GlobPattern)
+		_ = json.Unmarshal(data, u.GlobPattern)
 	case "special":
 		u.Special = new(SpecialFileSystemPath)
-		return json.Unmarshal(data, u.Special)
+		_ = json.Unmarshal(data, u.Special)
 	}
 	return nil
 }
@@ -1283,22 +1294,22 @@ func (u *FileSystemSpecialPath) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "root":
 		u.Root = new(RootFileSystemSpecialPath)
-		return json.Unmarshal(data, u.Root)
+		_ = json.Unmarshal(data, u.Root)
 	case "minimal":
 		u.Minimal = new(MinimalFileSystemSpecialPath)
-		return json.Unmarshal(data, u.Minimal)
+		_ = json.Unmarshal(data, u.Minimal)
 	case "project_roots":
 		u.ProjectRoots = new(KindFileSystemSpecialPath)
-		return json.Unmarshal(data, u.ProjectRoots)
+		_ = json.Unmarshal(data, u.ProjectRoots)
 	case "tmpdir":
 		u.Tmpdir = new(TmpdirFileSystemSpecialPath)
-		return json.Unmarshal(data, u.Tmpdir)
+		_ = json.Unmarshal(data, u.Tmpdir)
 	case "slash_tmp":
 		u.SlashTmp = new(SlashTmpFileSystemSpecialPath)
-		return json.Unmarshal(data, u.SlashTmp)
+		_ = json.Unmarshal(data, u.SlashTmp)
 	case "unknown":
 		u.Unknown = new(FileSystemSpecialPathUnknown)
-		return json.Unmarshal(data, u.Unknown)
+		_ = json.Unmarshal(data, u.Unknown)
 	}
 	return nil
 }
@@ -1494,25 +1505,25 @@ func (u *GuardianApprovalReviewAction) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "command":
 		u.Command = new(CommandGuardianApprovalReviewAction)
-		return json.Unmarshal(data, u.Command)
+		_ = json.Unmarshal(data, u.Command)
 	case "execve":
 		u.Execve = new(ExecveGuardianApprovalReviewAction)
-		return json.Unmarshal(data, u.Execve)
+		_ = json.Unmarshal(data, u.Execve)
 	case "writeStdin":
 		u.WriteStdin = new(WriteStdinGuardianApprovalReviewAction)
-		return json.Unmarshal(data, u.WriteStdin)
+		_ = json.Unmarshal(data, u.WriteStdin)
 	case "applyPatch":
 		u.ApplyPatch = new(ApplyPatchGuardianApprovalReviewAction)
-		return json.Unmarshal(data, u.ApplyPatch)
+		_ = json.Unmarshal(data, u.ApplyPatch)
 	case "networkAccess":
 		u.NetworkAccess = new(NetworkAccessGuardianApprovalReviewAction)
-		return json.Unmarshal(data, u.NetworkAccess)
+		_ = json.Unmarshal(data, u.NetworkAccess)
 	case "mcpToolCall":
 		u.McpToolCall = new(McpToolCallGuardianApprovalReviewAction)
-		return json.Unmarshal(data, u.McpToolCall)
+		_ = json.Unmarshal(data, u.McpToolCall)
 	case "requestPermissions":
 		u.RequestPermissions = new(RequestPermissionsGuardianApprovalReviewAction)
-		return json.Unmarshal(data, u.RequestPermissions)
+		_ = json.Unmarshal(data, u.RequestPermissions)
 	}
 	return nil
 }
@@ -1630,7 +1641,7 @@ func (u *ImageGenerationFailure) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "usageLimitExceeded":
 		u.UsageLimitExceeded = new(UsageLimitExceededImageGenerationFailure)
-		return json.Unmarshal(data, u.UsageLimitExceeded)
+		_ = json.Unmarshal(data, u.UsageLimitExceeded)
 	}
 	return nil
 }
@@ -1827,7 +1838,7 @@ func (u *LocalShellAction) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "exec":
 		u.Exec = new(ExecLocalShellAction)
-		return json.Unmarshal(data, u.Exec)
+		_ = json.Unmarshal(data, u.Exec)
 	}
 	return nil
 }
@@ -1978,7 +1989,8 @@ func (u MultiAgentMode) MarshalJSON() ([]byte, error) {
 func (u *MultiAgentMode) UnmarshalJSON(data []byte) error {
 	*u = MultiAgentMode{Raw: append(json.RawMessage(nil), data...)}
 	if len(data) > 0 && data[0] == '"' {
-		return json.Unmarshal(data, &u.Value)
+		_ = json.Unmarshal(data, &u.Value)
+		return nil
 	}
 	var keys map[string]json.RawMessage
 	if json.Unmarshal(data, &keys) != nil {
@@ -1986,7 +1998,8 @@ func (u *MultiAgentMode) UnmarshalJSON(data []byte) error {
 	}
 	if _, ok := keys["custom"]; ok {
 		u.Custom = new(CustomMultiAgentMode)
-		return json.Unmarshal(data, u.Custom)
+		_ = json.Unmarshal(data, u.Custom)
+		return nil
 	}
 	return nil
 }
@@ -2140,13 +2153,13 @@ func (u *PatchChangeKind) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "add":
 		u.Add = new(AddPatchChangeKind)
-		return json.Unmarshal(data, u.Add)
+		_ = json.Unmarshal(data, u.Add)
 	case "delete":
 		u.Delete = new(DeletePatchChangeKind)
-		return json.Unmarshal(data, u.Delete)
+		_ = json.Unmarshal(data, u.Delete)
 	case "update":
 		u.Update = new(UpdatePatchChangeKind)
-		return json.Unmarshal(data, u.Update)
+		_ = json.Unmarshal(data, u.Update)
 	}
 	return nil
 }
@@ -2344,10 +2357,10 @@ func (u *ReasoningItemContent) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "reasoning_text":
 		u.ReasoningText = new(ReasoningTextReasoningItemContent)
-		return json.Unmarshal(data, u.ReasoningText)
+		_ = json.Unmarshal(data, u.ReasoningText)
 	case "text":
 		u.Text = new(TextReasoningItemContent)
-		return json.Unmarshal(data, u.Text)
+		_ = json.Unmarshal(data, u.Text)
 	}
 	return nil
 }
@@ -2386,7 +2399,7 @@ func (u *ReasoningItemReasoningSummary) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "summary_text":
 		u.SummaryText = new(SummaryTextReasoningItemReasoningSummary)
-		return json.Unmarshal(data, u.SummaryText)
+		_ = json.Unmarshal(data, u.SummaryText)
 	}
 	return nil
 }
@@ -2587,52 +2600,52 @@ func (u *ResponseItem) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "message":
 		u.Message = new(MessageResponseItem)
-		return json.Unmarshal(data, u.Message)
+		_ = json.Unmarshal(data, u.Message)
 	case "agent_message":
 		u.AgentMessage = new(AgentMessageResponseItem)
-		return json.Unmarshal(data, u.AgentMessage)
+		_ = json.Unmarshal(data, u.AgentMessage)
 	case "reasoning":
 		u.Reasoning = new(ReasoningResponseItem)
-		return json.Unmarshal(data, u.Reasoning)
+		_ = json.Unmarshal(data, u.Reasoning)
 	case "local_shell_call":
 		u.LocalShellCall = new(LocalShellCallResponseItem)
-		return json.Unmarshal(data, u.LocalShellCall)
+		_ = json.Unmarshal(data, u.LocalShellCall)
 	case "function_call":
 		u.FunctionCall = new(FunctionCallResponseItem)
-		return json.Unmarshal(data, u.FunctionCall)
+		_ = json.Unmarshal(data, u.FunctionCall)
 	case "tool_search_call":
 		u.ToolSearchCall = new(ToolSearchCallResponseItem)
-		return json.Unmarshal(data, u.ToolSearchCall)
+		_ = json.Unmarshal(data, u.ToolSearchCall)
 	case "function_call_output":
 		u.FunctionCallOutput = new(FunctionCallOutputResponseItem)
-		return json.Unmarshal(data, u.FunctionCallOutput)
+		_ = json.Unmarshal(data, u.FunctionCallOutput)
 	case "custom_tool_call":
 		u.CustomToolCall = new(CustomToolCallResponseItem)
-		return json.Unmarshal(data, u.CustomToolCall)
+		_ = json.Unmarshal(data, u.CustomToolCall)
 	case "custom_tool_call_output":
 		u.CustomToolCallOutput = new(CustomToolCallOutputResponseItem)
-		return json.Unmarshal(data, u.CustomToolCallOutput)
+		_ = json.Unmarshal(data, u.CustomToolCallOutput)
 	case "tool_search_output":
 		u.ToolSearchOutput = new(ToolSearchOutputResponseItem)
-		return json.Unmarshal(data, u.ToolSearchOutput)
+		_ = json.Unmarshal(data, u.ToolSearchOutput)
 	case "web_search_call":
 		u.WebSearchCall = new(WebSearchCallResponseItem)
-		return json.Unmarshal(data, u.WebSearchCall)
+		_ = json.Unmarshal(data, u.WebSearchCall)
 	case "image_generation_call":
 		u.ImageGenerationCall = new(ImageGenerationCallResponseItem)
-		return json.Unmarshal(data, u.ImageGenerationCall)
+		_ = json.Unmarshal(data, u.ImageGenerationCall)
 	case "compaction":
 		u.Compaction = new(CompactionResponseItem)
-		return json.Unmarshal(data, u.Compaction)
+		_ = json.Unmarshal(data, u.Compaction)
 	case "compaction_trigger":
 		u.CompactionTrigger = new(CompactionTriggerResponseItem)
-		return json.Unmarshal(data, u.CompactionTrigger)
+		_ = json.Unmarshal(data, u.CompactionTrigger)
 	case "context_compaction":
 		u.ContextCompaction = new(ContextCompactionResponseItem)
-		return json.Unmarshal(data, u.ContextCompaction)
+		_ = json.Unmarshal(data, u.ContextCompaction)
 	case "other":
 		u.Other = new(OtherResponseItem)
-		return json.Unmarshal(data, u.Other)
+		_ = json.Unmarshal(data, u.Other)
 	}
 	return nil
 }
@@ -2722,16 +2735,16 @@ func (u *ResponsesApiWebSearchAction) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "search":
 		u.Search = new(SearchResponsesApiWebSearchAction)
-		return json.Unmarshal(data, u.Search)
+		_ = json.Unmarshal(data, u.Search)
 	case "open_page":
 		u.OpenPage = new(OpenPageResponsesApiWebSearchAction)
-		return json.Unmarshal(data, u.OpenPage)
+		_ = json.Unmarshal(data, u.OpenPage)
 	case "find_in_page":
 		u.FindInPage = new(FindInPageResponsesApiWebSearchAction)
-		return json.Unmarshal(data, u.FindInPage)
+		_ = json.Unmarshal(data, u.FindInPage)
 	case "other":
 		u.Other = new(OtherResponsesApiWebSearchAction)
-		return json.Unmarshal(data, u.Other)
+		_ = json.Unmarshal(data, u.Other)
 	}
 	return nil
 }
@@ -2816,16 +2829,16 @@ func (u *ReviewTarget) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "uncommittedChanges":
 		u.UncommittedChanges = new(UncommittedChangesReviewTarget)
-		return json.Unmarshal(data, u.UncommittedChanges)
+		_ = json.Unmarshal(data, u.UncommittedChanges)
 	case "baseBranch":
 		u.BaseBranch = new(BaseBranchReviewTarget)
-		return json.Unmarshal(data, u.BaseBranch)
+		_ = json.Unmarshal(data, u.BaseBranch)
 	case "commit":
 		u.Commit = new(CommitReviewTarget)
-		return json.Unmarshal(data, u.Commit)
+		_ = json.Unmarshal(data, u.Commit)
 	case "custom":
 		u.Custom = new(CustomReviewTarget)
-		return json.Unmarshal(data, u.Custom)
+		_ = json.Unmarshal(data, u.Custom)
 	}
 	return nil
 }
@@ -2900,16 +2913,16 @@ func (u *SandboxPolicy) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "dangerFullAccess":
 		u.DangerFullAccess = new(DangerFullAccessSandboxPolicy)
-		return json.Unmarshal(data, u.DangerFullAccess)
+		_ = json.Unmarshal(data, u.DangerFullAccess)
 	case "readOnly":
 		u.ReadOnly = new(ReadOnlySandboxPolicy)
-		return json.Unmarshal(data, u.ReadOnly)
+		_ = json.Unmarshal(data, u.ReadOnly)
 	case "externalSandbox":
 		u.ExternalSandbox = new(ExternalSandboxSandboxPolicy)
-		return json.Unmarshal(data, u.ExternalSandbox)
+		_ = json.Unmarshal(data, u.ExternalSandbox)
 	case "workspaceWrite":
 		u.WorkspaceWrite = new(WorkspaceWriteSandboxPolicy)
-		return json.Unmarshal(data, u.WorkspaceWrite)
+		_ = json.Unmarshal(data, u.WorkspaceWrite)
 	}
 	return nil
 }
@@ -2969,7 +2982,8 @@ func (u SessionSource) MarshalJSON() ([]byte, error) {
 func (u *SessionSource) UnmarshalJSON(data []byte) error {
 	*u = SessionSource{Raw: append(json.RawMessage(nil), data...)}
 	if len(data) > 0 && data[0] == '"' {
-		return json.Unmarshal(data, &u.Value)
+		_ = json.Unmarshal(data, &u.Value)
+		return nil
 	}
 	var keys map[string]json.RawMessage
 	if json.Unmarshal(data, &keys) != nil {
@@ -2977,11 +2991,13 @@ func (u *SessionSource) UnmarshalJSON(data []byte) error {
 	}
 	if _, ok := keys["custom"]; ok {
 		u.Custom = new(CustomSessionSource)
-		return json.Unmarshal(data, u.Custom)
+		_ = json.Unmarshal(data, u.Custom)
+		return nil
 	}
 	if _, ok := keys["subAgent"]; ok {
 		u.SubAgent = new(SubAgentSessionSource)
-		return json.Unmarshal(data, u.SubAgent)
+		_ = json.Unmarshal(data, u.SubAgent)
+		return nil
 	}
 	return nil
 }
@@ -3078,7 +3094,8 @@ func (u SubAgentSource) MarshalJSON() ([]byte, error) {
 func (u *SubAgentSource) UnmarshalJSON(data []byte) error {
 	*u = SubAgentSource{Raw: append(json.RawMessage(nil), data...)}
 	if len(data) > 0 && data[0] == '"' {
-		return json.Unmarshal(data, &u.Value)
+		_ = json.Unmarshal(data, &u.Value)
+		return nil
 	}
 	var keys map[string]json.RawMessage
 	if json.Unmarshal(data, &keys) != nil {
@@ -3086,11 +3103,13 @@ func (u *SubAgentSource) UnmarshalJSON(data []byte) error {
 	}
 	if _, ok := keys["thread_spawn"]; ok {
 		u.ThreadSpawn = new(ThreadSpawnSubAgentSource)
-		return json.Unmarshal(data, u.ThreadSpawn)
+		_ = json.Unmarshal(data, u.ThreadSpawn)
+		return nil
 	}
 	if _, ok := keys["other"]; ok {
 		u.Other = new(OtherSubAgentSource)
-		return json.Unmarshal(data, u.Other)
+		_ = json.Unmarshal(data, u.Other)
+		return nil
 	}
 	return nil
 }
@@ -3369,58 +3388,58 @@ func (u *ThreadItem) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "userMessage":
 		u.UserMessage = new(UserMessageThreadItem)
-		return json.Unmarshal(data, u.UserMessage)
+		_ = json.Unmarshal(data, u.UserMessage)
 	case "hookPrompt":
 		u.HookPrompt = new(HookPromptThreadItem)
-		return json.Unmarshal(data, u.HookPrompt)
+		_ = json.Unmarshal(data, u.HookPrompt)
 	case "agentMessage":
 		u.AgentMessage = new(AgentMessageThreadItem)
-		return json.Unmarshal(data, u.AgentMessage)
+		_ = json.Unmarshal(data, u.AgentMessage)
 	case "plan":
 		u.Plan = new(PlanThreadItem)
-		return json.Unmarshal(data, u.Plan)
+		_ = json.Unmarshal(data, u.Plan)
 	case "reasoning":
 		u.Reasoning = new(ReasoningThreadItem)
-		return json.Unmarshal(data, u.Reasoning)
+		_ = json.Unmarshal(data, u.Reasoning)
 	case "commandExecution":
 		u.CommandExecution = new(CommandExecutionThreadItem)
-		return json.Unmarshal(data, u.CommandExecution)
+		_ = json.Unmarshal(data, u.CommandExecution)
 	case "fileChange":
 		u.FileChange = new(FileChangeThreadItem)
-		return json.Unmarshal(data, u.FileChange)
+		_ = json.Unmarshal(data, u.FileChange)
 	case "mcpToolCall":
 		u.McpToolCall = new(McpToolCallThreadItem)
-		return json.Unmarshal(data, u.McpToolCall)
+		_ = json.Unmarshal(data, u.McpToolCall)
 	case "dynamicToolCall":
 		u.DynamicToolCall = new(DynamicToolCallThreadItem)
-		return json.Unmarshal(data, u.DynamicToolCall)
+		_ = json.Unmarshal(data, u.DynamicToolCall)
 	case "collabAgentToolCall":
 		u.CollabAgentToolCall = new(CollabAgentToolCallThreadItem)
-		return json.Unmarshal(data, u.CollabAgentToolCall)
+		_ = json.Unmarshal(data, u.CollabAgentToolCall)
 	case "subAgentActivity":
 		u.SubAgentActivity = new(SubAgentActivityThreadItem)
-		return json.Unmarshal(data, u.SubAgentActivity)
+		_ = json.Unmarshal(data, u.SubAgentActivity)
 	case "webSearch":
 		u.WebSearch = new(WebSearchThreadItem)
-		return json.Unmarshal(data, u.WebSearch)
+		_ = json.Unmarshal(data, u.WebSearch)
 	case "imageView":
 		u.ImageView = new(ImageViewThreadItem)
-		return json.Unmarshal(data, u.ImageView)
+		_ = json.Unmarshal(data, u.ImageView)
 	case "sleep":
 		u.Sleep = new(SleepThreadItem)
-		return json.Unmarshal(data, u.Sleep)
+		_ = json.Unmarshal(data, u.Sleep)
 	case "imageGeneration":
 		u.ImageGeneration = new(ImageGenerationThreadItem)
-		return json.Unmarshal(data, u.ImageGeneration)
+		_ = json.Unmarshal(data, u.ImageGeneration)
 	case "enteredReviewMode":
 		u.EnteredReviewMode = new(EnteredReviewModeThreadItem)
-		return json.Unmarshal(data, u.EnteredReviewMode)
+		_ = json.Unmarshal(data, u.EnteredReviewMode)
 	case "exitedReviewMode":
 		u.ExitedReviewMode = new(ExitedReviewModeThreadItem)
-		return json.Unmarshal(data, u.ExitedReviewMode)
+		_ = json.Unmarshal(data, u.ExitedReviewMode)
 	case "contextCompaction":
 		u.ContextCompaction = new(ContextCompactionThreadItem)
-		return json.Unmarshal(data, u.ContextCompaction)
+		_ = json.Unmarshal(data, u.ContextCompaction)
 	}
 	return nil
 }
@@ -3662,16 +3681,16 @@ func (u *ThreadStatus) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "notLoaded":
 		u.NotLoaded = new(NotLoadedThreadStatus)
-		return json.Unmarshal(data, u.NotLoaded)
+		_ = json.Unmarshal(data, u.NotLoaded)
 	case "idle":
 		u.Idle = new(IdleThreadStatus)
-		return json.Unmarshal(data, u.Idle)
+		_ = json.Unmarshal(data, u.Idle)
 	case "systemError":
 		u.SystemError = new(SystemErrorThreadStatus)
-		return json.Unmarshal(data, u.SystemError)
+		_ = json.Unmarshal(data, u.SystemError)
 	case "active":
 		u.Active = new(ActiveThreadStatus)
-		return json.Unmarshal(data, u.Active)
+		_ = json.Unmarshal(data, u.Active)
 	}
 	return nil
 }
@@ -3965,25 +3984,25 @@ func (u *UserInput) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "text":
 		u.Text = new(TextUserInput)
-		return json.Unmarshal(data, u.Text)
+		_ = json.Unmarshal(data, u.Text)
 	case "image":
 		u.Image = new(ImageUserInput)
-		return json.Unmarshal(data, u.Image)
+		_ = json.Unmarshal(data, u.Image)
 	case "localImage":
 		u.LocalImage = new(LocalImageUserInput)
-		return json.Unmarshal(data, u.LocalImage)
+		_ = json.Unmarshal(data, u.LocalImage)
 	case "audio":
 		u.Audio = new(AudioUserInput)
-		return json.Unmarshal(data, u.Audio)
+		_ = json.Unmarshal(data, u.Audio)
 	case "localAudio":
 		u.LocalAudio = new(LocalAudioUserInput)
-		return json.Unmarshal(data, u.LocalAudio)
+		_ = json.Unmarshal(data, u.LocalAudio)
 	case "skill":
 		u.Skill = new(SkillUserInput)
-		return json.Unmarshal(data, u.Skill)
+		_ = json.Unmarshal(data, u.Skill)
 	case "mention":
 		u.Mention = new(MentionUserInput)
-		return json.Unmarshal(data, u.Mention)
+		_ = json.Unmarshal(data, u.Mention)
 	}
 	return nil
 }
@@ -4053,16 +4072,16 @@ func (u *WebSearchAction) UnmarshalJSON(data []byte) error {
 	switch head.Tag {
 	case "search":
 		u.Search = new(SearchWebSearchAction)
-		return json.Unmarshal(data, u.Search)
+		_ = json.Unmarshal(data, u.Search)
 	case "openPage":
 		u.OpenPage = new(OpenPageWebSearchAction)
-		return json.Unmarshal(data, u.OpenPage)
+		_ = json.Unmarshal(data, u.OpenPage)
 	case "findInPage":
 		u.FindInPage = new(FindInPageWebSearchAction)
-		return json.Unmarshal(data, u.FindInPage)
+		_ = json.Unmarshal(data, u.FindInPage)
 	case "other":
 		u.Other = new(OtherWebSearchAction)
-		return json.Unmarshal(data, u.Other)
+		_ = json.Unmarshal(data, u.Other)
 	}
 	return nil
 }

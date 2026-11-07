@@ -486,24 +486,27 @@ func (g *generator) union(name string, s schema) string {
 	}
 	b.WriteString("\tif len(u.Raw) > 0 {\n\t\treturn u.Raw, nil\n\t}\n\treturn []byte(\"null\"), nil\n}\n\n")
 
-	// UnmarshalJSON: keep the raw JSON, then decode the arm it names.
+	// UnmarshalJSON: keep the raw JSON, then decode the arm it names. A
+	// field of the arm whose type Codex changed is left zero rather than
+	// failing the arm, or the message it rides in: the data is already
+	// valid JSON, so the only errors here are of that kind.
 	fmt.Fprintf(&b, "func (u *%s) UnmarshalJSON(data []byte) error {\n", name)
 	fmt.Fprintf(&b, "\t*u = %s{Raw: append(json.RawMessage(nil), data...)}\n", name)
 	if hasString {
-		b.WriteString("\tif len(data) > 0 && data[0] == '\"' {\n\t\treturn json.Unmarshal(data, &u.Value)\n\t}\n")
+		b.WriteString("\tif len(data) > 0 && data[0] == '\"' {\n\t\t_ = json.Unmarshal(data, &u.Value)\n\t\treturn nil\n\t}\n")
 	}
 	if disc != "" {
 		fmt.Fprintf(&b, "\tvar head struct {\n\t\tTag string `json:%q`\n\t}\n", disc)
 		b.WriteString("\tif json.Unmarshal(data, &head) != nil {\n\t\treturn nil\n\t}\n")
 		fmt.Fprintf(&b, "\tu.%s = head.Tag\n\tswitch head.Tag {\n", ident(disc))
 		for _, v := range variants {
-			fmt.Fprintf(&b, "\tcase %q:\n\t\tu.%s = new(%s)\n\t\treturn json.Unmarshal(data, u.%s)\n", v.tag, v.field, v.typ, v.field)
+			fmt.Fprintf(&b, "\tcase %q:\n\t\tu.%s = new(%s)\n\t\t_ = json.Unmarshal(data, u.%s)\n", v.tag, v.field, v.typ, v.field)
 		}
 		b.WriteString("\t}\n\treturn nil\n}\n")
 	} else {
 		b.WriteString("\tvar keys map[string]json.RawMessage\n\tif json.Unmarshal(data, &keys) != nil {\n\t\treturn nil\n\t}\n")
 		for _, v := range variants {
-			fmt.Fprintf(&b, "\tif _, ok := keys[%q]; ok {\n\t\tu.%s = new(%s)\n\t\treturn json.Unmarshal(data, u.%s)\n\t}\n", v.tag, v.field, v.typ, v.field)
+			fmt.Fprintf(&b, "\tif _, ok := keys[%q]; ok {\n\t\tu.%s = new(%s)\n\t\t_ = json.Unmarshal(data, u.%s)\n\t\treturn nil\n\t}\n", v.tag, v.field, v.typ, v.field)
 		}
 		b.WriteString("\treturn nil\n}\n")
 	}
