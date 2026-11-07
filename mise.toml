@@ -1,5 +1,8 @@
 [tools]
 bun = "1.3"
+go = "1.27.3"
+# Signs the release assets, keyless, in CI.
+cosign = "3.0.6"
 
 # mise owns the dependency graph. The `run` sugar delegates here for everything
 # except `version`; CI and local dev both go through these tasks, so the two
